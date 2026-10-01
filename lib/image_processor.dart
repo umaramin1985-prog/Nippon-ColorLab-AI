@@ -36,6 +36,7 @@ class ProcessImageParams {
   final Color targetColor;
   final double tolerance;
   final bool showMaskOverlay;
+  final math.Rectangle<int>? boundingBox;
 
   ProcessImageParams({
     required this.image,
@@ -45,6 +46,7 @@ class ProcessImageParams {
     required this.targetColor,
     required this.tolerance,
     this.showMaskOverlay = false,
+    this.boundingBox,
   });
 }
 
@@ -60,6 +62,7 @@ img.Image _floodFillColorize(ProcessImageParams params) {
   final aiMasks = params.aiMasks;
   final manualStrokes = params.manualStrokes;
   final showMaskOverlay = params.showMaskOverlay;
+  final boundingBox = params.boundingBox;
 
   if (taps.isEmpty && aiMasks.isEmpty && manualStrokes.isEmpty)
     return image.clone();
@@ -176,6 +179,9 @@ img.Image _floodFillColorize(ProcessImageParams params) {
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       if (mask[y * width + x]) {
+        if (boundingBox != null && !boundingBox.containsPoint(math.Point(x, y))) {
+          continue;
+        }
         if (showMaskOverlay) {
           // Highlight in bright neon green for mask editing mode
           result.setPixelRgb(x, y, 0, 255, 0);
@@ -187,11 +193,15 @@ img.Image _floodFillColorize(ProcessImageParams params) {
           double s = targetHsl[1];
           double l = originalHsl[2];
 
+          if (l > 0.6) {
+            l = 0.6 + (l - 0.6) * 0.5;
+          }
+
           final newRgb = _hslToRgb(h, s, l);
 
-          final blendR = ((newRgb[0] * 0.7) + ((p.r * tR) / 255 * 0.3)).toInt();
-          final blendG = ((newRgb[1] * 0.7) + ((p.g * tG) / 255 * 0.3)).toInt();
-          final blendB = ((newRgb[2] * 0.7) + ((p.b * tB) / 255 * 0.3)).toInt();
+          final blendR = ((newRgb[0] * 0.7) + (tR * 0.3)).toInt().clamp(0, 255);
+          final blendG = ((newRgb[1] * 0.7) + (tG * 0.3)).toInt().clamp(0, 255);
+          final blendB = ((newRgb[2] * 0.7) + (tB * 0.3)).toInt().clamp(0, 255);
 
           result.setPixelRgb(x, y, blendR, blendG, blendB);
         }

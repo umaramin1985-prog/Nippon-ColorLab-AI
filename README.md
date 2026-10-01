@@ -1,19 +1,22 @@
 # Nippon ColorLab AI
 
-Nippon ColorLab AI is a Flutter application that allows users to visualize and experiment with different colors for their rooms. It leverages AI and image processing to let you pick colors and see them applied to photos of your living spaces.
+Nippon ColorLab AI is an advanced, AI-powered Flutter application designed to revolutionize interior and exterior paint visualization. By leveraging on-device Machine Learning and high-fidelity image processing, it empowers users to seamlessly experiment with real-world paint colors on their own photos.
 
-## Features
+## ✨ Core Features
 
-- **Upload Room Photos**: Easily upload photos of any room in your house.
-- **Color Selection**: Pick from a wide variety of colors.
-- **AI Color Application**: The app intelligently applies your chosen color to the walls in the photo, giving you a realistic preview of the new look.
-- **Save & Share**: Save your favorite colored room previews or share them with friends and family.
+- **Local AI Object Detection (Google ML Kit)**: Automatically detects distinct subjects in your room—such as walls, ceilings, and floors—without needing an internet connection.
+- **Natural Language AI Assistant**: Talk to the app naturally! Type *"Change the colour of the ceiling to blue"*, and the app will instantly match your request with real Nippon Fandeck shades and accurately paint the ceiling.
+- **Smart Color Blending Algorithm**: Our custom HSL-based blending logic preserves 3D lighting, ambient shadows, and naturally compresses highlights. Even extremely bright glossy reflections (shine) are beautifully tinted with your chosen paint color.
+- **Magnetic Selection Boundaries**: Tap the Eye icon to view faint bounding outlines of detected room structures. Resize the global selection box, which magnetically snaps to object boundaries, allowing you to crop and isolate precisely where the paint is applied.
+- **Magic Flood Fill**: Instantly fill custom regions by simply tapping them. Includes a granular **Tolerance Slider** to fine-tune how aggressively the color spreads across similar pixels.
+- **Comprehensive Nippon Fandeck**: Browse and search through the massive dataset of official Nippon Paint colors to find your perfect shade.
+- **Offline & Private**: Built with privacy in mind. All image processing and ML Kit segmentation happens strictly on-device.
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Flutter SDK (latest version)
+- [Flutter SDK](https://flutter.dev/docs/get-started/install) (latest version)
 - Dart SDK
 
 ### Installation
@@ -35,17 +38,19 @@ Nippon ColorLab AI is a Flutter application that allows users to visualize and e
    flutter run
    ```
 
-## Architecture
+## 🏗 Architecture
 
 This project is built using Flutter and organized around key features, including:
-- **Home Page**: Entry point of the app where users can select or take photos.
-- **Editor Page**: The core interface for applying and visualizing colors on the selected image.
-- **Image Processor**: Contains the logic for intelligent color mapping and application.
+- **Home Page**: The sleek entry point of the app where users can visualize photos, browse color inspiration, and access their gallery.
+- **Editor Page**: The heavy-lifting workspace containing the AI Text Prompt, Interactive Canvas, ML Segmentation overlays, and Paint Tools.
+- **Image Processor**: A highly optimized Dart Isolate worker that executes Flood Fill algorithms, HSL color-space conversions, and intelligent highlight blending without freezing the UI.
+- **Models & Globals**: Contains the statically parsed global Fandeck JSON/CSV dataset initialized at startup.
 
-## Technologies Used
+## 💻 Technologies Used
 
-- [Flutter](https://flutter.dev/)
-- [Dart](https://dart.dev/)
+- [Flutter](https://flutter.dev/) & [Dart](https://dart.dev/)
+- [Google ML Kit Subject Segmentation](https://pub.dev/packages/google_mlkit_subject_segmentation)
+- [Image (Dart Package)](https://pub.dev/packages/image)
 
 ---
-*This project is a starting point for a Flutter application.*
+*Developed with a focus on immersive aesthetics and AI-driven workflows.*

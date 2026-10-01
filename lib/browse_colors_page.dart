@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'login_page.dart';
 
 class BrowseColorsPage extends StatefulWidget {
   const BrowseColorsPage({super.key});
@@ -26,6 +27,18 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
         ),
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white),
+            tooltip: 'Logout',
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -91,7 +104,6 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            flex: 3,
             child: Container(
               decoration: BoxDecoration(
                 color: fandeckColor.color,
@@ -101,31 +113,30 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
               ),
             ),
           ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    fandeckColor.name,
-                    style: const TextStyle(
-                      color: Colors.black87,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 10,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  fandeckColor.name,
+                  style: const TextStyle(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'HEX: #${fandeckColor.hex}',
-                    style: const TextStyle(color: Colors.black54, fontSize: 9),
-                  ),
-                ],
-              ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'HEX: #${fandeckColor.hex}',
+                  style: const TextStyle(color: Colors.black54, fontSize: 9),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
         ],

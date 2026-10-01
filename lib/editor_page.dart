@@ -8,9 +8,7 @@ import 'package:google_mlkit_subject_segmentation/google_mlkit_subject_segmentat
 import 'image_processor.dart';
 import 'models.dart';
 
-enum EditType { tap, aiMask, stroke }
-
-enum EditMode { magic, brush, eraser }
+enum EditType { tap, aiMask }
 
 class EditorPage extends StatefulWidget {
   final String imagePath;
@@ -29,21 +27,17 @@ class _EditorPageState extends State<EditorPage> {
   bool _isLoading = true;
   bool _isProcessing = false;
 
-  Color _targetColor = Colors.red;
+  Color _targetColor = globalFandeckColors.isNotEmpty ? globalFandeckColors.first.color : Colors.white;
   double _tolerance = 0.1;
-  double _brushSize = 20.0;
-
   List<math.Point<int>> _taps = [];
   List<AIMask> _aiMasks = [];
-  List<Stroke> _manualStrokes = [];
   List<EditType> _editHistory = [];
 
   double _sliderPosition = 0.5;
 
-  EditMode _currentMode = EditMode.magic;
   bool _showMask = false;
-
-  Stroke? _currentStroke;
+  String? _dragEdge;
+  math.Rectangle<int>? _globalSelectionBox;
 
   late final SubjectSegmenter _segmenter;
   SubjectSegmentationResult? _segmentationResult;
@@ -89,6 +83,14 @@ class _EditorPageState extends State<EditorPage> {
         _originalBytes = img.encodeJpg(decoded);
         _editedImage = decoded.clone();
         _editedBytes = _originalBytes;
+        
+        if (_segmentationResult != null && _segmentationResult!.subjects.isNotEmpty) {
+          final s = _segmentationResult!.subjects[0];
+          _globalSelectionBox = math.Rectangle(s.startX, s.startY, s.width, s.height);
+        } else {
+          _globalSelectionBox = math.Rectangle(0, 0, decoded.width, decoded.height);
+        }
+        
         _isLoading = false;
       });
     }
@@ -134,7 +136,7 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   void _onImageTapped(TapUpDetails details, BoxConstraints constraints) {
-    if (_currentMode != EditMode.magic) return;
+    if (_showMask) return; // Prevent tapping while adjusting mask
 
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
     if (pt == null) return;
@@ -286,34 +288,64 @@ class _EditorPageState extends State<EditorPage> {
     );
   }
 
-  void _onPanStart(DragStartDetails details, BoxConstraints constraints) {
-    if (_currentMode == EditMode.magic) return;
+
+  void _onMaskPanDown(DragDownDetails details, BoxConstraints constraints) {
+    if (!_showMask || _globalSelectionBox == null) return;
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
-    if (pt != null) {
-      _currentStroke = Stroke(
-        [pt],
-        _brushSize,
-        _currentMode == EditMode.eraser,
-      );
-    }
+    if (pt == null) return;
+    
+    int edgeTol = 40;
+    if ((pt.x - _globalSelectionBox!.left).abs() < edgeTol) _dragEdge = 'L';
+    else if ((pt.x - _globalSelectionBox!.right).abs() < edgeTol) _dragEdge = 'R';
+    else if ((pt.y - _globalSelectionBox!.top).abs() < edgeTol) _dragEdge = 'T';
+    else if ((pt.y - _globalSelectionBox!.bottom).abs() < edgeTol) _dragEdge = 'B';
+    else _dragEdge = 'C';
   }
 
-  void _onPanUpdate(DragUpdateDetails details, BoxConstraints constraints) {
-    if (_currentMode == EditMode.magic || _currentStroke == null) return;
+  void _onMaskPanUpdate(DragUpdateDetails details, BoxConstraints constraints) {
+    if (!_showMask || _globalSelectionBox == null || _dragEdge == null) return;
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
-    if (pt != null) {
-      _currentStroke!.points.add(pt);
-    }
-  }
+    if (pt == null) return;
 
-  void _onPanEnd(DragEndDetails details) {
-    if (_currentMode == EditMode.magic || _currentStroke == null) return;
+    int newL = _globalSelectionBox!.left;
+    int newR = _globalSelectionBox!.right;
+    int newT = _globalSelectionBox!.top;
+    int newB = _globalSelectionBox!.bottom;
+
+    if (_dragEdge == 'L') newL = pt.x;
+    if (_dragEdge == 'R') newR = pt.x;
+    if (_dragEdge == 'T') newT = pt.y;
+    if (_dragEdge == 'B') newB = pt.y;
+
+    int snapDist = 40;
+    if (_segmentationResult != null) {
+      for (var s in _segmentationResult!.subjects) {
+        if (_dragEdge == 'L' && (newL - s.startX).abs() < snapDist) newL = s.startX;
+        if (_dragEdge == 'R' && (newR - (s.startX + s.width)).abs() < snapDist) newR = s.startX + s.width;
+        if (_dragEdge == 'T' && (newT - s.startY).abs() < snapDist) newT = s.startY;
+        if (_dragEdge == 'B' && (newB - (s.startY + s.height)).abs() < snapDist) newB = s.startY + s.height;
+      }
+    }
+
+    if (newL >= newR) {
+      if (_dragEdge == 'L') newL = newR - 1;
+      else newR = newL + 1;
+    }
+    if (newT >= newB) {
+      if (_dragEdge == 'T') newT = newB - 1;
+      else newB = newT + 1;
+    }
+
     setState(() {
-      _manualStrokes.add(_currentStroke!);
-      _editHistory.add(EditType.stroke);
-      _currentStroke = null;
+      _globalSelectionBox = math.Rectangle(newL, newT, newR - newL, newB - newT);
     });
-    _processImage();
+  }
+
+  void _onMaskPanEnd(DragEndDetails details) {
+    _dragEdge = null;
+    if (_showMask) {
+      _processImage();
+    }
   }
 
   void _undoLast() {
@@ -325,8 +357,6 @@ class _EditorPageState extends State<EditorPage> {
         if (_taps.isNotEmpty) _taps.removeLast();
       } else if (last == EditType.aiMask) {
         if (_aiMasks.isNotEmpty) _aiMasks.removeLast();
-      } else if (last == EditType.stroke) {
-        if (_manualStrokes.isNotEmpty) _manualStrokes.removeLast();
       }
     });
 
@@ -335,7 +365,7 @@ class _EditorPageState extends State<EditorPage> {
 
   Future<void> _processImage() async {
     if (_originalImage == null) return;
-    if (_taps.isEmpty && _aiMasks.isEmpty && _manualStrokes.isEmpty) {
+    if (_taps.isEmpty && _aiMasks.isEmpty) {
       setState(() {
         _editedImage = _originalImage?.clone();
         _editedBytes = _originalBytes;
@@ -351,10 +381,11 @@ class _EditorPageState extends State<EditorPage> {
       image: _originalImage!,
       taps: _taps,
       aiMasks: _aiMasks,
-      manualStrokes: _manualStrokes,
+      manualStrokes: [],
       targetColor: _targetColor,
       tolerance: _tolerance,
-      showMaskOverlay: _showMask,
+      showMaskOverlay: false,
+      boundingBox: _globalSelectionBox,
     );
 
     final result = await processImage(params);
@@ -434,6 +465,237 @@ class _EditorPageState extends State<EditorPage> {
     );
   }
 
+  void _handleAIPrompt(String prompt) {
+    if (_originalImage == null) return;
+    
+    final lowerPrompt = prompt.toLowerCase();
+    
+    final colorsToFind = ['red', 'blue', 'green', 'yellow', 'pink', 'purple', 'orange', 'black', 'white', 'grey', 'gray', 'brown'];
+    String? foundColorStr;
+    for (var c in colorsToFind) {
+      if (lowerPrompt.contains(c)) {
+        foundColorStr = c;
+        break;
+      }
+    }
+    
+    List<FandeckColor> matchedColors = [];
+    if (foundColorStr != null && globalFandeckColors.isNotEmpty) {
+      matchedColors = globalFandeckColors.where((c) => c.name.toLowerCase().contains(foundColorStr!)).toList();
+    }
+
+    if (matchedColors.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not understand the color from your prompt.')),
+      );
+      return;
+    }
+
+    dynamic selectedSubject;
+    if (_segmentationResult != null && _segmentationResult!.subjects.isNotEmpty) {
+      selectedSubject = _segmentationResult!.subjects[0];
+      
+      if (lowerPrompt.contains('ceiling') || lowerPrompt.contains('roof') || lowerPrompt.contains('top')) {
+        int minStartY = selectedSubject.startY;
+        for (var s in _segmentationResult!.subjects) {
+          if (s.startY < minStartY) {
+            minStartY = s.startY;
+            selectedSubject = s;
+          }
+        }
+      } else if (lowerPrompt.contains('floor') || lowerPrompt.contains('ground') || lowerPrompt.contains('bottom') || lowerPrompt.contains('carpet')) {
+        int maxBottomY = selectedSubject.startY + selectedSubject.height;
+        for (var s in _segmentationResult!.subjects) {
+          int bottomY = s.startY + s.height;
+          if (bottomY > maxBottomY) {
+            maxBottomY = bottomY;
+            selectedSubject = s;
+          }
+        }
+      } else if (lowerPrompt.contains('left')) {
+        int minStartX = selectedSubject.startX;
+        for (var s in _segmentationResult!.subjects) {
+          if (s.startX < minStartX) {
+            minStartX = s.startX;
+            selectedSubject = s;
+          }
+        }
+      } else if (lowerPrompt.contains('right')) {
+        int maxRightX = selectedSubject.startX + selectedSubject.width;
+        for (var s in _segmentationResult!.subjects) {
+          int rightX = s.startX + s.width;
+          if (rightX > maxRightX) {
+            maxRightX = rightX;
+            selectedSubject = s;
+          }
+        }
+      } else {
+        var maxArea = selectedSubject.width * selectedSubject.height;
+        for (var s in _segmentationResult!.subjects) {
+          var area = s.width * s.height;
+          if (area > maxArea) {
+            maxArea = area;
+            selectedSubject = s;
+          }
+        }
+      }
+    }
+    
+    _showAIColorSelectionSheet(matchedColors, selectedSubject);
+  }
+
+  void _showAIColorSelectionSheet(List<FandeckColor> colors, dynamic subject) {
+    final top10 = colors.take(10).toList();
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Select a Shade',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: top10
+                    .map(
+                      (c) => GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _targetColor = c.color;
+                          });
+                          Navigator.pop(context);
+                          
+                          if (subject != null) {
+                            setState(() {
+                              _aiMasks.add(
+                                AIMask(
+                                  subject.confidenceMask!,
+                                  subject.startX,
+                                  subject.startY,
+                                  subject.width,
+                                  subject.height,
+                                ),
+                              );
+                              _editHistory.add(EditType.aiMask);
+                            });
+                          } else {
+                            setState(() {
+                              _taps.add(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2));
+                              _editHistory.add(EditType.tap);
+                            });
+                          }
+                          _processImage();
+                        },
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 50,
+                              height: 50,
+                              decoration: BoxDecoration(
+                                color: c.color,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 2,
+                                ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black45,
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              width: 60,
+                              child: Text(
+                                c.name,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white70,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showAIPromptDialog() {
+    final TextEditingController controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.auto_awesome, color: Color(0xFFC8102E)),
+              SizedBox(width: 8),
+              Text('AI Assistant'),
+            ],
+          ),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: 'e.g., change colour of wall to red',
+              hintStyle: TextStyle(color: Colors.white54),
+            ),
+            onSubmitted: (val) {
+              Navigator.pop(context);
+              _handleAIPrompt(val);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
+              onPressed: () {
+                Navigator.pop(context);
+                _handleAIPrompt(controller.text);
+              },
+              child: const Text('Apply', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      }
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -450,6 +712,11 @@ class _EditorPageState extends State<EditorPage> {
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_awesome, color: Colors.amber),
+            onPressed: _showAIPromptDialog,
+            tooltip: 'AI Assistant',
+          ),
           IconButton(
             icon: Icon(
               _showMask ? Icons.visibility : Icons.visibility_off,
@@ -474,7 +741,6 @@ class _EditorPageState extends State<EditorPage> {
               setState(() {
                 _taps.clear();
                 _aiMasks.clear();
-                _manualStrokes.clear();
                 _editHistory.clear();
               });
               _processImage();
@@ -492,15 +758,15 @@ class _EditorPageState extends State<EditorPage> {
                 builder: (context, constraints) {
                   return InteractiveViewer(
                     maxScale: 10.0,
-                    panEnabled: _currentMode == EditMode.magic,
+                    panEnabled: !_showMask,
                     child: GestureDetector(
                       onTapUp: (details) =>
                           _onImageTapped(details, constraints),
-                      onPanStart: (details) =>
-                          _onPanStart(details, constraints),
+                      onPanDown: (details) =>
+                          _onMaskPanDown(details, constraints),
                       onPanUpdate: (details) =>
-                          _onPanUpdate(details, constraints),
-                      onPanEnd: _onPanEnd,
+                          _onMaskPanUpdate(details, constraints),
+                      onPanEnd: _onMaskPanEnd,
                       child: Stack(
                         children: [
                           if (_editedBytes != null)
@@ -527,6 +793,19 @@ class _EditorPageState extends State<EditorPage> {
                                     width: constraints.maxWidth,
                                     height: constraints.maxHeight,
                                     fit: BoxFit.contain,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (_showMask && _originalImage != null)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: ObjectBoundsPainter(
+                                    _segmentationResult,
+                                    _originalImage!.width,
+                                    _originalImage!.height,
+                                    _globalSelectionBox,
                                   ),
                                 ),
                               ),
@@ -670,105 +949,36 @@ class _EditorPageState extends State<EditorPage> {
                         ),
                       ),
                       const SizedBox(width: 24),
-                      // Tool selector
+                      // Tolerance Slider
+                      const Text(
+                        'Tolerance:',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
                       Expanded(
-                        child: SegmentedButton<EditMode>(
-                          style: SegmentedButton.styleFrom(
-                            backgroundColor: Colors.white10,
-                            foregroundColor: Colors.white70,
-                            selectedForegroundColor: Colors.white,
-                            selectedBackgroundColor: const Color(0xFFC8102E),
-                          ),
-                          segments: const [
-                            ButtonSegment(
-                              value: EditMode.magic,
-                              icon: Icon(Icons.auto_fix_high),
-                              label: Text('Magic'),
-                            ),
-                            ButtonSegment(
-                              value: EditMode.brush,
-                              icon: Icon(Icons.brush),
-                              label: Text('Brush'),
-                            ),
-                            ButtonSegment(
-                              value: EditMode.eraser,
-                              icon: Icon(Icons.dry_cleaning),
-                              label: Text('Eraser'),
-                            ),
-                          ],
-                          selected: {_currentMode},
-                          onSelectionChanged: (Set<EditMode> selection) {
+                        child: Slider(
+                          value: _tolerance,
+                          min: 0.01,
+                          max: 1.0,
+                          activeColor: const Color(0xFFC8102E),
+                          onChanged: (value) {
                             setState(() {
-                              _currentMode = selection.first;
+                              _tolerance = value;
                             });
                           },
+                          onChangeEnd: (value) {
+                            _processImage();
+                          },
+                        ),
+                      ),
+                      Text(
+                        '${(_tolerance * 100).toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  // Sliders
-                  if (_currentMode == EditMode.magic)
-                    Row(
-                      children: [
-                        const Text(
-                          'Tolerance:',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _tolerance,
-                            min: 0.01,
-                            max: 1.0,
-                            activeColor: const Color(0xFFC8102E),
-                            onChanged: (value) {
-                              setState(() {
-                                _tolerance = value;
-                              });
-                            },
-                            onChangeEnd: (value) {
-                              _processImage();
-                            },
-                          ),
-                        ),
-                        Text(
-                          '${(_tolerance * 100).toStringAsFixed(0)}%',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    )
-                  else
-                    Row(
-                      children: [
-                        const Text(
-                          'Brush Size:',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _brushSize,
-                            min: 5.0,
-                            max: 100.0,
-                            activeColor: const Color(0xFFC8102E),
-                            onChanged: (value) {
-                              setState(() {
-                                _brushSize = value;
-                              });
-                            },
-                          ),
-                        ),
-                        Text(
-                          '${_brushSize.toStringAsFixed(0)}px',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
                 ],
               ),
             ),
@@ -777,4 +987,93 @@ class _EditorPageState extends State<EditorPage> {
       ),
     );
   }
+}
+
+class ObjectBoundsPainter extends CustomPainter {
+  final SubjectSegmentationResult? segmentationResult;
+  final int imageWidth;
+  final int imageHeight;
+  final math.Rectangle<int>? selectionBox;
+
+  ObjectBoundsPainter(this.segmentationResult, this.imageWidth, this.imageHeight, this.selectionBox);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final imageRatio = imageWidth / imageHeight;
+    final widgetRatio = size.width / size.height;
+
+    double renderWidth, renderHeight;
+    double offsetX = 0, offsetY = 0;
+
+    if (imageRatio > widgetRatio) {
+      renderWidth = size.width;
+      renderHeight = renderWidth / imageRatio;
+      offsetY = (size.height - renderHeight) / 2;
+    } else {
+      renderHeight = size.height;
+      renderWidth = renderHeight * imageRatio;
+      offsetX = (size.width - renderWidth) / 2;
+    }
+
+    final scaleX = renderWidth / imageWidth;
+    final scaleY = renderHeight / imageHeight;
+
+    if (segmentationResult != null) {
+      final subjectPaint = Paint()
+        ..color = Colors.white38
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+        
+      for (var subject in segmentationResult!.subjects) {
+        final rect = Rect.fromLTWH(
+          offsetX + subject.startX * scaleX,
+          offsetY + subject.startY * scaleY,
+          subject.width * scaleX,
+          subject.height * scaleY,
+        );
+        canvas.drawRect(rect, subjectPaint);
+      }
+    }
+
+    if (selectionBox != null) {
+      final rect = Rect.fromLTWH(
+        offsetX + selectionBox!.left * scaleX,
+        offsetY + selectionBox!.top * scaleY,
+        selectionBox!.width * scaleX,
+        selectionBox!.height * scaleY,
+      );
+      
+      final activePaint = Paint()
+        ..color = Colors.greenAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.0;
+
+      final bgPaint = Paint()
+        ..color = Colors.greenAccent.withOpacity(0.2)
+        ..style = PaintingStyle.fill;
+        
+      canvas.drawRect(rect, bgPaint);
+      canvas.drawRect(rect, activePaint);
+      
+      final handlePaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+      canvas.drawCircle(rect.centerLeft, 6, handlePaint);
+      canvas.drawCircle(rect.centerRight, 6, handlePaint);
+      canvas.drawCircle(rect.topCenter, 6, handlePaint);
+      canvas.drawCircle(rect.bottomCenter, 6, handlePaint);
+      
+      final textSpan = const TextSpan(
+        text: 'Selection Bounds',
+        style: TextStyle(color: Colors.white, fontSize: 10, backgroundColor: Colors.black54),
+      );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(rect.left, rect.top - 14));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ObjectBoundsPainter oldDelegate) => true;
 }
