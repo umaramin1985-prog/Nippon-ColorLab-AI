@@ -11,14 +11,20 @@ class AIMask {
   final int width;
   final int height;
 
-  AIMask(this.confidenceMask, this.startX, this.startY, this.width, this.height);
+  AIMask(
+    this.confidenceMask,
+    this.startX,
+    this.startY,
+    this.width,
+    this.height,
+  );
 }
 
 class Stroke {
   final List<math.Point<int>> points;
   final double brushSize;
   final bool isEraser;
-  
+
   Stroke(this.points, this.brushSize, this.isEraser);
 }
 
@@ -55,12 +61,13 @@ img.Image _floodFillColorize(ProcessImageParams params) {
   final manualStrokes = params.manualStrokes;
   final showMaskOverlay = params.showMaskOverlay;
 
-  if (taps.isEmpty && aiMasks.isEmpty && manualStrokes.isEmpty) return image.clone();
+  if (taps.isEmpty && aiMasks.isEmpty && manualStrokes.isEmpty)
+    return image.clone();
 
   final result = image.clone();
   final width = result.width;
   final height = result.height;
-  
+
   // 1. Create a unified boolean mask
   final mask = List<bool>.filled(width * height, false);
 
@@ -95,7 +102,7 @@ img.Image _floodFillColorize(ProcessImageParams params) {
     }
 
     final tolSq = tolerance * tolerance * 255 * 255 * 3;
-    final edgeTolSq = (tolerance * 1.5) * (tolerance * 1.5) * 255 * 255 * 3; 
+    final edgeTolSq = (tolerance * 1.5) * (tolerance * 1.5) * 255 * 255 * 3;
 
     while (queue.isNotEmpty) {
       final idx = queue.removeLast();
@@ -175,17 +182,17 @@ img.Image _floodFillColorize(ProcessImageParams params) {
         } else {
           final p = image.getPixel(x, y);
           final originalHsl = _rgbToHsl(p.r, p.g, p.b);
-          
+
           double h = targetHsl[0];
           double s = targetHsl[1];
-          double l = originalHsl[2]; 
-          
+          double l = originalHsl[2];
+
           final newRgb = _hslToRgb(h, s, l);
-          
+
           final blendR = ((newRgb[0] * 0.7) + ((p.r * tR) / 255 * 0.3)).toInt();
           final blendG = ((newRgb[1] * 0.7) + ((p.g * tG) / 255 * 0.3)).toInt();
           final blendB = ((newRgb[2] * 0.7) + ((p.b * tB) / 255 * 0.3)).toInt();
-          
+
           result.setPixelRgb(x, y, blendR, blendG, blendB);
         }
       }
@@ -220,7 +227,7 @@ List<double> _rgbToHsl(num r, num g, num b) {
 List<int> _hslToRgb(double h, double s, double l) {
   double r, g, b;
   if (s == 0) {
-    r = g = b = l; 
+    r = g = b = l;
   } else {
     double hue2rgb(double p, double q, double t) {
       if (t < 0) t += 1;
@@ -230,6 +237,7 @@ List<int> _hslToRgb(double h, double s, double l) {
       if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
       return p;
     }
+
     double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
     double p = 2 * l - q;
     r = hue2rgb(p, q, h + 1 / 3);

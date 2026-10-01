@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
-import 'home_page.dart';
+import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'login_page.dart';
+import 'models.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    final jsonStr = await rootBundle.loadString('assets/colors.json');
+    final List<dynamic> jsonList = jsonDecode(jsonStr);
+    globalFandeckColors = jsonList
+        .map((e) => FandeckColor.fromJson(e))
+        .toList();
+  } catch (e) {
+    debugPrint("Failed to load fandeck colors: $e");
+  }
+
   runApp(const RoomColorApp());
 }
 
@@ -14,7 +29,8 @@ class RoomColorApp extends StatelessWidget {
       title: 'Nippon ColorLab AI',
       theme: ThemeData(
         brightness: Brightness.dark,
-        primarySwatch: Colors.blueGrey,
+        primaryColor: const Color(0xFFC8102E),
+        primarySwatch: Colors.red,
         scaffoldBackgroundColor: const Color(0xFF121212),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1E1E1E),
@@ -22,7 +38,7 @@ class RoomColorApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomePage(),
+      home: const LoginPage(),
       debugShowCheckedModeBanner: false,
     );
   }
