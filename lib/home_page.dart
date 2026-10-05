@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import 'editor_page.dart';
 import 'browse_colors_page.dart';
+import 'auto_showcase_page.dart';
+import 'favorites_page.dart';
 import 'login_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -19,6 +20,8 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final List<Widget> pages = [
       const _VisualizeTab(),
+      const AutoShowcasePage(),
+      const FavoritesPage(),
       const BrowseColorsPage(),
       const _InspirationTab(),
     ];
@@ -45,10 +48,21 @@ class _HomePageState extends State<HomePage> {
             label: 'Visualize',
           ),
           BottomNavigationBarItem(
+            icon: Icon(Icons.collections),
+            label: 'Auto Paint',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.favorite),
+            label: 'Favorites',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.color_lens),
             label: 'Colours',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.lightbulb), label: 'Ideas'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.lightbulb),
+            label: 'Ideas',
+          ),
         ],
       ),
     );
@@ -66,7 +80,10 @@ class _VisualizeTab extends StatelessWidget {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => EditorPage(imagePath: pickedFile.path),
+            builder: (_) => EditorPage(
+              imagePath: pickedFile.path,
+              imageFile: pickedFile,
+            ),
           ),
         );
       }
@@ -201,12 +218,63 @@ class _InspirationTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inspirations = [
+      {
+        'title': 'Royal Living Room',
+        'category': 'Living Room',
+        'icon': Icons.weekend,
+        'gradient': [const Color(0xFF1E3C72), const Color(0xFF2A5298)],
+        'colors': [const Color(0xFF003366), const Color(0xFFD4AF37), const Color(0xFFF5F5DC)],
+        'shade': 'Deep Royal Blue & Gold'
+      },
+      {
+        'title': 'Nordic Bedroom',
+        'category': 'Bedroom',
+        'icon': Icons.bed,
+        'gradient': [const Color(0xFF2C3E50), const Color(0xFF4CA1AF)],
+        'colors': [const Color(0xFF6C7A89), const Color(0xFFE6E6FA), const Color(0xFFF0F8FF)],
+        'shade': 'Muted Sage & Pearl'
+      },
+      {
+        'title': 'Warm Dining Haven',
+        'category': 'Dining Room',
+        'icon': Icons.restaurant,
+        'gradient': [const Color(0xFFD31027), const Color(0xFFEA384D)],
+        'colors': [const Color(0xFFC8102E), const Color(0xFFFFF8DC), const Color(0xFF8B4513)],
+        'shade': 'Nippon Crimson & Cream'
+      },
+      {
+        'title': 'Executive Office',
+        'category': 'Workspace',
+        'icon': Icons.business_center,
+        'gradient': [const Color(0xFF3A6073), const Color(0xFF3A7BD5)],
+        'colors': [const Color(0xFF2F4F4F), const Color(0xFFB0C4DE), const Color(0xFFFFFFFF)],
+        'shade': 'Slate Grey & Steel'
+      },
+      {
+        'title': 'Cozy Sunlight Lounge',
+        'category': 'Lounge',
+        'icon': Icons.wb_sunny,
+        'gradient': [const Color(0xFFF7971E), const Color(0xFFFFD200)],
+        'colors': [const Color(0xFFFFA500), const Color(0xFFFFFDD0), const Color(0xFF808000)],
+        'shade': 'Warm Sunset Gold'
+      },
+      {
+        'title': 'Modern Minimalist Kitchen',
+        'category': 'Kitchen',
+        'icon': Icons.kitchen,
+        'gradient': [const Color(0xFF434343), const Color(0xFF000000)],
+        'colors': [const Color(0xFF1F1F1F), const Color(0xFFE0E0E0), const Color(0xFF9E9E9E)],
+        'shade': 'Charcoal & Crisp White'
+      },
+    ];
+
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
         title: const Text(
-          'Inspiration',
-          style: TextStyle(fontWeight: FontWeight.bold),
+          'Colour Inspiration',
+          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1),
         ),
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
@@ -223,24 +291,98 @@ class _InspirationTab extends StatelessWidget {
           ),
         ],
       ),
-      body: GridView.builder(
+      body: ListView.builder(
         padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 0.75,
-        ),
-        itemCount: 8,
+        itemCount: inspirations.length,
         itemBuilder: (context, index) {
+          final item = inspirations[index];
+          final List<Color> colors = item['colors'] as List<Color>;
+          final List<Color> gradient = item['gradient'] as List<Color>;
+
           return Container(
+            margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white24),
+              gradient: LinearGradient(
+                colors: gradient,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.4),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: const Center(
-              child: Icon(Icons.image, size: 50, color: Colors.white38),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(item['icon'] as IconData, color: Colors.white, size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item['title'] as String,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            Text(
+                              item['shade'] as String,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white.withOpacity(0.8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Text(
+                        'Palette: ',
+                        style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(width: 8),
+                      ...colors.map(
+                        (c) => Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 4),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           );
         },

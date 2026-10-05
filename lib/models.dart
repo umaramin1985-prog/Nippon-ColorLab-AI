@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
 class FandeckColor {
   final String name;
@@ -29,3 +30,19 @@ class FandeckColor {
 }
 
 List<FandeckColor> globalFandeckColors = [];
+
+class FavoriteRoom {
+  final String id;
+  final FandeckColor fandeckColor;
+  final Uint8List imageBytes;
+  final DateTime savedAt;
+
+  FavoriteRoom({
+    required this.id,
+    required this.fandeckColor,
+    required this.imageBytes,
+    required this.savedAt,
+  });
+}
+
+List<FavoriteRoom> globalFavoriteRooms = [];

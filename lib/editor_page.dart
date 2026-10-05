@@ -1,10 +1,12 @@
-import 'dart:io';
+import 'dart:io' as io;
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:google_mlkit_subject_segmentation/google_mlkit_subject_segmentation.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 import 'image_processor.dart';
 import 'models.dart';
 
@@ -12,7 +14,15 @@ enum EditType { tap, aiMask }
 
 class EditorPage extends StatefulWidget {
   final String imagePath;
-  const EditorPage({super.key, required this.imagePath});
+  final XFile? imageFile;
+  final Uint8List? imageBytes;
+
+  const EditorPage({
+    super.key,
+    required this.imagePath,
+    this.imageFile,
+    this.imageBytes,
+  });
 
   @override
   State<EditorPage> createState() => _EditorPageState();
@@ -33,7 +43,7 @@ class _EditorPageState extends State<EditorPage> {
   List<AIMask> _aiMasks = [];
   List<EditType> _editHistory = [];
 
-  double _sliderPosition = 0.5;
+  double _sliderPosition = 0.0;
 
   bool _showMask = false;
   String? _dragEdge;
@@ -41,6 +51,7 @@ class _EditorPageState extends State<EditorPage> {
 
   late final SubjectSegmenter _segmenter;
   SubjectSegmentationResult? _segmentationResult;
+  final TextEditingController _aiPromptController = TextEditingController();
 
   @override
   void initState() {
@@ -61,15 +72,37 @@ class _EditorPageState extends State<EditorPage> {
   @override
   void dispose() {
     _segmenter.close();
+    _aiPromptController.dispose();
     super.dispose();
   }
 
   Future<void> _loadImage() async {
-    final bytes = await File(widget.imagePath).readAsBytes();
+    Uint8List? bytes;
+    try {
+      if (widget.imageBytes != null) {
+        bytes = widget.imageBytes;
+      } else if (widget.imageFile != null) {
+        bytes = await widget.imageFile!.readAsBytes();
+      } else if (kIsWeb) {
+        bytes = await XFile(widget.imagePath).readAsBytes();
+      } else {
+        bytes = await io.File(widget.imagePath).readAsBytes();
+      }
+    } catch (e) {
+      debugPrint("Error reading image bytes: $e");
+    }
+
+    if (bytes == null) {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
+
     final decoded = img.decodeImage(bytes);
 
     try {
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (!kIsWeb && (io.Platform.isAndroid || io.Platform.isIOS)) {
         final inputImage = InputImage.fromFilePath(widget.imagePath);
         _segmentationResult = await _segmenter.processImage(inputImage);
       }
@@ -419,6 +452,10 @@ class _EditorPageState extends State<EditorPage> {
                   onTap: () {
                     setState(() {
                       _targetColor = c.color;
+                      if (_taps.isEmpty && _aiMasks.isEmpty && _originalImage != null) {
+                        _taps.add(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2));
+                        _editHistory.add(EditType.tap);
+                      }
                     });
                     Navigator.of(context).pop();
                     _processImage();
@@ -692,7 +729,137 @@ class _EditorPageState extends State<EditorPage> {
             ),
           ],
         );
-      }
+      },
+    );
+  }
+
+  void _showPaintCalculatorDialog() {
+    final widthController = TextEditingController(text: '12');
+    final heightController = TextEditingController(text: '10');
+    double totalSqFt = 120;
+    double litersNeeded = 1.7;
+    int estimatedCostPkr = 3400;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void calculate() {
+              final w = double.tryParse(widthController.text) ?? 0;
+              final h = double.tryParse(heightController.text) ?? 0;
+              final area = w * h;
+              // 1 Liter covers ~70 sq ft with 2 coats
+              final liters = area > 0 ? (area / 70.0) : 0.0;
+              // Avg cost PKR 2000 per liter
+              final cost = (liters * 2000).round();
+
+              setDialogState(() {
+                totalSqFt = area;
+                litersNeeded = double.parse(liters.toStringAsFixed(1));
+                estimatedCostPkr = cost;
+              });
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.calculate, color: Color(0xFFC8102E)),
+                  SizedBox(width: 10),
+                  Text('Paint Calculator', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Enter Wall Dimensions (Feet):', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: widthController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          onChanged: (_) => calculate(),
+                          decoration: InputDecoration(
+                            labelText: 'Width (ft)',
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.08),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: heightController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          onChanged: (_) => calculate(),
+                          decoration: InputDecoration(
+                            labelText: 'Height (ft)',
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.08),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFC8102E).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFC8102E).withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Total Wall Area:', style: TextStyle(color: Colors.white70)),
+                            Text('${totalSqFt.toStringAsFixed(0)} sq ft', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Nippon Paint Required:', style: TextStyle(color: Colors.white70)),
+                            Text('$litersNeeded Liters (2 coats)', style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Est. Paint Cost:', style: TextStyle(color: Colors.white70)),
+                            Text('PKR $estimatedCostPkr', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close', style: TextStyle(color: Colors.white70)),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -712,6 +879,11 @@ class _EditorPageState extends State<EditorPage> {
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.calculate, color: Colors.cyanAccent),
+            onPressed: _showPaintCalculatorDialog,
+            tooltip: 'Paint Calculator',
+          ),
           IconButton(
             icon: const Icon(Icons.auto_awesome, color: Colors.amber),
             onPressed: _showAIPromptDialog,
@@ -751,6 +923,45 @@ class _EditorPageState extends State<EditorPage> {
       ),
       body: Column(
         children: [
+          // Persistent Always-Visible AI Conversation Bar at the top
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1E1E1E),
+              border: Border(bottom: BorderSide(color: Colors.white12)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: Colors.amber, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _aiPromptController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      hintText: '✨ Talk to AI: "Change ceiling to blue" or "Paint wall red"...',
+                      hintStyle: TextStyle(color: Colors.white54, fontSize: 12),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                    onSubmitted: (val) {
+                      if (val.trim().isNotEmpty) {
+                        _handleAIPrompt(val);
+                      }
+                    },
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send_rounded, color: Color(0xFFC8102E), size: 20),
+                  onPressed: () {
+                    if (_aiPromptController.text.trim().isNotEmpty) {
+                      _handleAIPrompt(_aiPromptController.text);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: Container(
               color: Colors.black,
