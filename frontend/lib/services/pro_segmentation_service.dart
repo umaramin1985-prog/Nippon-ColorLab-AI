@@ -10,6 +10,17 @@ class ProSegmentationService implements AISegmentationService {
 
   ProSegmentationService({this.backendUrl = 'http://192.168.18.195:8000/api/v1/segment'});
 
+  Future<bool> isAvailable() async {
+    try {
+      final uri = Uri.parse(backendUrl);
+      final healthUri = Uri(scheme: uri.scheme, host: uri.host, port: uri.port, path: '/');
+      final response = await http.get(healthUri).timeout(const Duration(seconds: 3));
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
   @override
   Future<AIMask?> segment({
     required String imagePath,

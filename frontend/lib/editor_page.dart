@@ -41,6 +41,7 @@ class _EditorPageState extends State<EditorPage> {
 
 
 
+  bool _isProAvailable = false;
   AIMode _currentAIMode = AIMode.lite;
   late final LiteSegmentationService _liteSegmentationService;
   late final ProSegmentationService _proSegmentationService;
@@ -50,7 +51,20 @@ class _EditorPageState extends State<EditorPage> {
     super.initState();
     _liteSegmentationService = LiteSegmentationService();
     _proSegmentationService = ProSegmentationService();
+    _checkProAvailability();
     _loadImage();
+  }
+
+  Future<void> _checkProAvailability() async {
+    final available = await _proSegmentationService.isAvailable();
+    if (mounted) {
+      setState(() {
+        _isProAvailable = available;
+        if (!_isProAvailable && _currentAIMode == AIMode.pro) {
+          _currentAIMode = AIMode.lite;
+        }
+      });
+    }
   }
 
   @override
@@ -640,12 +654,12 @@ class _EditorPageState extends State<EditorPage> {
                       ChoiceChip(
                         label: const Text('AI Pro'),
                         selected: _currentAIMode == AIMode.pro,
-                        onSelected: (selected) {
+                        onSelected: _isProAvailable ? (selected) {
                           if (selected) {
                             setDialogState(() => _currentAIMode = AIMode.pro);
                             setState(() => _currentAIMode = AIMode.pro);
                           }
-                        },
+                        } : null,
                       ),
                     ],
                   ),
