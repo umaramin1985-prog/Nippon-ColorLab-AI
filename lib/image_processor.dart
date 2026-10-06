@@ -3,22 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:flutter/material.dart' show Color;
-
-class AIMask {
-  final List<double> confidenceMask;
-  final int startX;
-  final int startY;
-  final int width;
-  final int height;
-
-  AIMask(
-    this.confidenceMask,
-    this.startX,
-    this.startY,
-    this.width,
-    this.height,
-  );
-}
+import 'models/ai_mask.dart';
 
 class Stroke {
   final List<math.Point<int>> points;
@@ -36,7 +21,6 @@ class ProcessImageParams {
   final Color targetColor;
   final double tolerance;
   final bool showMaskOverlay;
-  final math.Rectangle<int>? boundingBox;
 
   ProcessImageParams({
     required this.image,
@@ -46,7 +30,6 @@ class ProcessImageParams {
     required this.targetColor,
     required this.tolerance,
     this.showMaskOverlay = false,
-    this.boundingBox,
   });
 }
 
@@ -62,7 +45,6 @@ img.Image _floodFillColorize(ProcessImageParams params) {
   final aiMasks = params.aiMasks;
   final manualStrokes = params.manualStrokes;
   final showMaskOverlay = params.showMaskOverlay;
-  final boundingBox = params.boundingBox;
 
   if (taps.isEmpty && aiMasks.isEmpty && manualStrokes.isEmpty)
     return image.clone();
@@ -179,9 +161,6 @@ img.Image _floodFillColorize(ProcessImageParams params) {
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       if (mask[y * width + x]) {
-        if (boundingBox != null && !boundingBox.containsPoint(math.Point(x, y))) {
-          continue;
-        }
         if (showMaskOverlay) {
           // Highlight in bright neon green for mask editing mode
           result.setPixelRgb(x, y, 0, 255, 0);

@@ -1,0 +1,4 @@
+enum AIMode {
+  lite,
+  pro,
+}

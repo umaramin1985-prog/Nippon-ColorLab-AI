@@ -20,7 +20,6 @@ class _HomePageState extends State<HomePage> {
     final List<Widget> pages = [
       const _VisualizeTab(),
       const BrowseColorsPage(),
-      const _InspirationTab(),
     ];
 
     return Scaffold(
@@ -48,7 +47,6 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(Icons.color_lens),
             label: 'Colours',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.lightbulb), label: 'Ideas'),
         ],
       ),
     );
@@ -77,9 +75,25 @@ class _VisualizeTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Visualize Your Space',
-          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2),
+        title: const Column(
+          children: [
+            Text(
+              'Nippon Paint',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.0,
+                fontSize: 22,
+              ),
+            ),
+            Text(
+              'Visualize Your Space',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white70,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
         ),
         centerTitle: true,
         backgroundColor: const Color(0xFFC8102E),
@@ -191,59 +205,6 @@ class _VisualizeTab extends StatelessWidget {
           ),
           elevation: 5,
         ),
-      ),
-    );
-  }
-}
-
-class _InspirationTab extends StatelessWidget {
-  const _InspirationTab();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: const Text(
-          'Inspiration',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: const Color(0xFFC8102E),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            tooltip: 'Logout',
-            onPressed: () {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) => const LoginPage()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 0.75,
-        ),
-        itemCount: 8,
-        itemBuilder: (context, index) {
-          return Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: const Center(
-              child: Icon(Icons.image, size: 50, color: Colors.white38),
-            ),
-          );
-        },
       ),
     );
   }

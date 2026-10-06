@@ -3,10 +3,15 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
-import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import 'package:google_mlkit_subject_segmentation/google_mlkit_subject_segmentation.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'image_processor.dart';
 import 'models.dart';
+import 'models/ai_mode.dart';
+import 'models/ai_mask.dart';
+import 'services/ai_segmentation_service.dart';
+import 'services/lite_segmentation_service.dart';
+import 'services/pro_segmentation_service.dart';
 
 enum EditType { tap, aiMask }
 
@@ -20,7 +25,6 @@ class EditorPage extends StatefulWidget {
 
 class _EditorPageState extends State<EditorPage> {
   img.Image? _originalImage;
-  img.Image? _editedImage;
   Uint8List? _originalBytes;
   Uint8List? _editedBytes;
 
@@ -35,32 +39,24 @@ class _EditorPageState extends State<EditorPage> {
 
   double _sliderPosition = 0.5;
 
-  bool _showMask = false;
-  String? _dragEdge;
-  math.Rectangle<int>? _globalSelectionBox;
 
-  late final SubjectSegmenter _segmenter;
-  SubjectSegmentationResult? _segmentationResult;
+
+  AIMode _currentAIMode = AIMode.lite;
+  late final LiteSegmentationService _liteSegmentationService;
+  late final ProSegmentationService _proSegmentationService;
 
   @override
   void initState() {
     super.initState();
-    _segmenter = SubjectSegmenter(
-      options: SubjectSegmenterOptions(
-        enableForegroundConfidenceMask: false,
-        enableForegroundBitmap: false,
-        enableMultipleSubjects: SubjectResultOptions(
-          enableConfidenceMask: true,
-          enableSubjectBitmap: false,
-        ),
-      ),
-    );
+    _liteSegmentationService = LiteSegmentationService();
+    _proSegmentationService = ProSegmentationService();
     _loadImage();
   }
 
   @override
   void dispose() {
-    _segmenter.close();
+    _liteSegmentationService.dispose();
+    _proSegmentationService.dispose();
     super.dispose();
   }
 
@@ -68,28 +64,11 @@ class _EditorPageState extends State<EditorPage> {
     final bytes = await File(widget.imagePath).readAsBytes();
     final decoded = img.decodeImage(bytes);
 
-    try {
-      if (Platform.isAndroid || Platform.isIOS) {
-        final inputImage = InputImage.fromFilePath(widget.imagePath);
-        _segmentationResult = await _segmenter.processImage(inputImage);
-      }
-    } catch (e) {
-      debugPrint("ML Kit not supported or failed: $e");
-    }
-
     if (decoded != null) {
       setState(() {
         _originalImage = decoded;
-        _originalBytes = img.encodeJpg(decoded);
-        _editedImage = decoded.clone();
+        _originalBytes = img.encodePng(decoded);
         _editedBytes = _originalBytes;
-        
-        if (_segmentationResult != null && _segmentationResult!.subjects.isNotEmpty) {
-          final s = _segmentationResult!.subjects[0];
-          _globalSelectionBox = math.Rectangle(s.startX, s.startY, s.width, s.height);
-        } else {
-          _globalSelectionBox = math.Rectangle(0, 0, decoded.width, decoded.height);
-        }
         
         _isLoading = false;
       });
@@ -135,54 +114,39 @@ class _EditorPageState extends State<EditorPage> {
     return math.Point(x, y);
   }
 
-  void _onImageTapped(TapUpDetails details, BoxConstraints constraints) {
-    if (_showMask) return; // Prevent tapping while adjusting mask
-
+  Future<void> _onImageTapped(TapUpDetails details, BoxConstraints constraints) async {
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
     if (pt == null) return;
 
     bool foundAISubject = false;
 
-    if (_segmentationResult != null) {
-      for (var subject in _segmentationResult!.subjects) {
-        if (pt.x >= subject.startX &&
-            pt.x < subject.startX + subject.width &&
-            pt.y >= subject.startY &&
-            pt.y < subject.startY + subject.height) {
-          int localX = pt.x - subject.startX;
-          int localY = pt.y - subject.startY;
-          int idx = localY * subject.width + localX;
-
-          if (subject.confidenceMask != null &&
-              subject.confidenceMask![idx] > 0.5) {
-            setState(() {
-              _aiMasks.add(
-                AIMask(
-                  subject.confidenceMask!,
-                  subject.startX,
-                  subject.startY,
-                  subject.width,
-                  subject.height,
-                ),
-              );
-              _editHistory.add(EditType.aiMask);
-            });
-            foundAISubject = true;
-            break;
-          }
-        }
-      }
+    AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
+    AIMask? mask = await service.segmentByPoint(imagePath: widget.imagePath, point: pt);
+    
+    if (mask == null && _currentAIMode == AIMode.pro) {
+      // Fallback to lite for tap since pro might not support tap
+      mask = await _liteSegmentationService.segmentByPoint(imagePath: widget.imagePath, point: pt);
     }
 
-    if (!foundAISubject) {
+    if (mask != null && mounted) {
+      setState(() {
+        _aiMasks.add(mask!);
+        _editHistory.add(EditType.aiMask);
+      });
+      foundAISubject = true;
+    }
+
+    if (!foundAISubject && mounted) {
       setState(() {
         _taps.add(pt);
         _editHistory.add(EditType.tap);
       });
     }
 
-    _suggestColors(pt);
-    _processImage();
+    if (mounted) {
+      _suggestColors(pt);
+      _processImage();
+    }
   }
 
   void _suggestColors(math.Point<int> pt) {
@@ -280,6 +244,26 @@ class _EditorPageState extends State<EditorPage> {
                     )
                     .toList(),
               ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showColorPicker();
+                  },
+                  icon: const Icon(Icons.search),
+                  label: const Text('Search & Browse All Colors'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC8102E),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
             ],
           ),
@@ -289,64 +273,7 @@ class _EditorPageState extends State<EditorPage> {
   }
 
 
-  void _onMaskPanDown(DragDownDetails details, BoxConstraints constraints) {
-    if (!_showMask || _globalSelectionBox == null) return;
-    final pt = _getPointFromLocalPosition(details.localPosition, constraints);
-    if (pt == null) return;
-    
-    int edgeTol = 40;
-    if ((pt.x - _globalSelectionBox!.left).abs() < edgeTol) _dragEdge = 'L';
-    else if ((pt.x - _globalSelectionBox!.right).abs() < edgeTol) _dragEdge = 'R';
-    else if ((pt.y - _globalSelectionBox!.top).abs() < edgeTol) _dragEdge = 'T';
-    else if ((pt.y - _globalSelectionBox!.bottom).abs() < edgeTol) _dragEdge = 'B';
-    else _dragEdge = 'C';
-  }
 
-  void _onMaskPanUpdate(DragUpdateDetails details, BoxConstraints constraints) {
-    if (!_showMask || _globalSelectionBox == null || _dragEdge == null) return;
-    final pt = _getPointFromLocalPosition(details.localPosition, constraints);
-    if (pt == null) return;
-
-    int newL = _globalSelectionBox!.left;
-    int newR = _globalSelectionBox!.right;
-    int newT = _globalSelectionBox!.top;
-    int newB = _globalSelectionBox!.bottom;
-
-    if (_dragEdge == 'L') newL = pt.x;
-    if (_dragEdge == 'R') newR = pt.x;
-    if (_dragEdge == 'T') newT = pt.y;
-    if (_dragEdge == 'B') newB = pt.y;
-
-    int snapDist = 40;
-    if (_segmentationResult != null) {
-      for (var s in _segmentationResult!.subjects) {
-        if (_dragEdge == 'L' && (newL - s.startX).abs() < snapDist) newL = s.startX;
-        if (_dragEdge == 'R' && (newR - (s.startX + s.width)).abs() < snapDist) newR = s.startX + s.width;
-        if (_dragEdge == 'T' && (newT - s.startY).abs() < snapDist) newT = s.startY;
-        if (_dragEdge == 'B' && (newB - (s.startY + s.height)).abs() < snapDist) newB = s.startY + s.height;
-      }
-    }
-
-    if (newL >= newR) {
-      if (_dragEdge == 'L') newL = newR - 1;
-      else newR = newL + 1;
-    }
-    if (newT >= newB) {
-      if (_dragEdge == 'T') newT = newB - 1;
-      else newB = newT + 1;
-    }
-
-    setState(() {
-      _globalSelectionBox = math.Rectangle(newL, newT, newR - newL, newB - newT);
-    });
-  }
-
-  void _onMaskPanEnd(DragEndDetails details) {
-    _dragEdge = null;
-    if (_showMask) {
-      _processImage();
-    }
-  }
 
   void _undoLast() {
     if (_editHistory.isEmpty) return;
@@ -363,11 +290,26 @@ class _EditorPageState extends State<EditorPage> {
     _processImage();
   }
 
+  Future<void> _shareImage() async {
+    if (_editedBytes == null) return;
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/recolored_image.png');
+      await file.writeAsBytes(_editedBytes!);
+      await Share.shareXFiles([XFile(file.path)], text: 'Check out my new room color!');
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to share image.')),
+        );
+      }
+    }
+  }
+
   Future<void> _processImage() async {
     if (_originalImage == null) return;
     if (_taps.isEmpty && _aiMasks.isEmpty) {
       setState(() {
-        _editedImage = _originalImage?.clone();
         _editedBytes = _originalBytes;
       });
       return;
@@ -385,87 +327,120 @@ class _EditorPageState extends State<EditorPage> {
       targetColor: _targetColor,
       tolerance: _tolerance,
       showMaskOverlay: false,
-      boundingBox: _globalSelectionBox,
     );
 
     final result = await processImage(params);
-    final resultBytes = img.encodeJpg(result);
+    final resultBytes = img.encodePng(result);
 
     setState(() {
-      _editedImage = result;
       _editedBytes = resultBytes;
       _isProcessing = false;
     });
   }
 
   void _showColorPicker() {
+    String searchQuery = '';
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Fandeck Colors'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount: globalFandeckColors.length,
-              itemBuilder: (context, index) {
-                final c = globalFandeckColors[index];
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _targetColor = c.color;
-                    });
-                    Navigator.of(context).pop();
-                    _processImage();
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: c.color,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Container(
-                        width: double.infinity,
-                        color: Colors.black54,
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          c.name,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final filteredColors = globalFandeckColors
+                .where((c) => c.name.toLowerCase().contains(searchQuery.toLowerCase()))
+                .toList();
+
+            return AlertDialog(
+              title: const Text('Fandeck Colors'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.6,
+                child: Column(
+                  children: [
+                    TextField(
+                      decoration: InputDecoration(
+                        hintText: 'Search colors...',
+                        prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
                         ),
                       ),
+                      style: const TextStyle(color: Colors.white),
+                      onChanged: (value) {
+                        setStateDialog(() {
+                          searchQuery = value;
+                        });
+                      },
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Close'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: GridView.builder(
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: filteredColors.length,
+                        itemBuilder: (context, index) {
+                          final c = filteredColors[index];
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _targetColor = c.color;
+                              });
+                              Navigator.of(context).pop();
+                              _processImage();
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: c.color,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.white24),
+                              ),
+                              child: Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  width: double.infinity,
+                                  color: Colors.black54,
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Text(
+                                    c.name,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.white,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Close'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                ),
+              ],
+            );
+          }
         );
       },
     );
   }
 
-  void _handleAIPrompt(String prompt) {
+  Future<void> _handleAIPrompt(String prompt) async {
     if (_originalImage == null) return;
     
     final lowerPrompt = prompt.toLowerCase();
@@ -491,57 +466,45 @@ class _EditorPageState extends State<EditorPage> {
       return;
     }
 
-    dynamic selectedSubject;
-    if (_segmentationResult != null && _segmentationResult!.subjects.isNotEmpty) {
-      selectedSubject = _segmentationResult!.subjects[0];
-      
-      if (lowerPrompt.contains('ceiling') || lowerPrompt.contains('roof') || lowerPrompt.contains('top')) {
-        int minStartY = selectedSubject.startY;
-        for (var s in _segmentationResult!.subjects) {
-          if (s.startY < minStartY) {
-            minStartY = s.startY;
-            selectedSubject = s;
-          }
-        }
-      } else if (lowerPrompt.contains('floor') || lowerPrompt.contains('ground') || lowerPrompt.contains('bottom') || lowerPrompt.contains('carpet')) {
-        int maxBottomY = selectedSubject.startY + selectedSubject.height;
-        for (var s in _segmentationResult!.subjects) {
-          int bottomY = s.startY + s.height;
-          if (bottomY > maxBottomY) {
-            maxBottomY = bottomY;
-            selectedSubject = s;
-          }
-        }
-      } else if (lowerPrompt.contains('left')) {
-        int minStartX = selectedSubject.startX;
-        for (var s in _segmentationResult!.subjects) {
-          if (s.startX < minStartX) {
-            minStartX = s.startX;
-            selectedSubject = s;
-          }
-        }
-      } else if (lowerPrompt.contains('right')) {
-        int maxRightX = selectedSubject.startX + selectedSubject.width;
-        for (var s in _segmentationResult!.subjects) {
-          int rightX = s.startX + s.width;
-          if (rightX > maxRightX) {
-            maxRightX = rightX;
-            selectedSubject = s;
-          }
-        }
-      } else {
-        var maxArea = selectedSubject.width * selectedSubject.height;
-        for (var s in _segmentationResult!.subjects) {
-          var area = s.width * s.height;
-          if (area > maxArea) {
-            maxArea = area;
-            selectedSubject = s;
-          }
-        }
-      }
+    String targetObject = 'wall';
+    if (lowerPrompt.contains('ceiling') || lowerPrompt.contains('roof')) targetObject = 'ceiling';
+    if (lowerPrompt.contains('floor') || lowerPrompt.contains('ground') || lowerPrompt.contains('carpet')) targetObject = 'floor';
+    if (lowerPrompt.contains('door')) targetObject = 'door';
+    if (lowerPrompt.contains('cabinet')) targetObject = 'cabinet';
+
+    String? position;
+    if (lowerPrompt.contains('left')) position = 'left';
+    if (lowerPrompt.contains('right')) position = 'right';
+    if (lowerPrompt.contains('top')) position = 'top';
+    if (lowerPrompt.contains('bottom')) position = 'bottom';
+    if (lowerPrompt.contains('center')) position = 'center';
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
+
+    final mask = await service.segment(
+      imagePath: widget.imagePath,
+      object: targetObject,
+      position: position,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessing = false;
+    });
+
+    if (mask == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("We couldn't confidently detect the requested surface. Try another description or use manual selection.")),
+      );
+      return;
     }
     
-    _showAIColorSelectionSheet(matchedColors, selectedSubject);
+    _showAIColorSelectionSheet(matchedColors, mask);
   }
 
   void _showAIColorSelectionSheet(List<FandeckColor> colors, dynamic subject) {
@@ -584,15 +547,7 @@ class _EditorPageState extends State<EditorPage> {
                           
                           if (subject != null) {
                             setState(() {
-                              _aiMasks.add(
-                                AIMask(
-                                  subject.confidenceMask!,
-                                  subject.startX,
-                                  subject.startY,
-                                  subject.width,
-                                  subject.height,
-                                ),
-                              );
+                              _aiMasks.add(subject);
                               _editHistory.add(EditType.aiMask);
                             });
                           } else {
@@ -656,41 +611,83 @@ class _EditorPageState extends State<EditorPage> {
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.auto_awesome, color: Color(0xFFC8102E)),
-              SizedBox(width: 8),
-              Text('AI Assistant'),
-            ],
-          ),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              hintText: 'e.g., change colour of wall to red',
-              hintStyle: TextStyle(color: Colors.white54),
-            ),
-            onSubmitted: (val) {
-              Navigator.pop(context);
-              _handleAIPrompt(val);
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
-              onPressed: () {
-                Navigator.pop(context);
-                _handleAIPrompt(controller.text);
-              },
-              child: const Text('Apply', style: TextStyle(color: Colors.white)),
-            ),
-          ],
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.auto_awesome, color: Color(0xFFC8102E)),
+                  SizedBox(width: 8),
+                  Text('AI Assistant'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('AI Lite'),
+                        selected: _currentAIMode == AIMode.lite,
+                        onSelected: (selected) {
+                          if (selected) {
+                            setDialogState(() => _currentAIMode = AIMode.lite);
+                            setState(() => _currentAIMode = AIMode.lite);
+                          }
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('AI Pro'),
+                        selected: _currentAIMode == AIMode.pro,
+                        onSelected: (selected) {
+                          if (selected) {
+                            setDialogState(() => _currentAIMode = AIMode.pro);
+                            setState(() => _currentAIMode = AIMode.pro);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _currentAIMode == AIMode.lite 
+                        ? 'Fast • Offline • Private'
+                        : 'Advanced AI Segmentation • Best Accuracy',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'e.g., change colour of wall to red',
+                      hintStyle: TextStyle(color: Colors.white54),
+                    ),
+                    onSubmitted: (val) {
+                      Navigator.pop(context);
+                      _handleAIPrompt(val);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _handleAIPrompt(controller.text);
+                  },
+                  child: const Text('Apply', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          }
         );
       }
     );
@@ -705,9 +702,26 @@ class _EditorPageState extends State<EditorPage> {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        title: const Text(
-          'Visualize',
-          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2),
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Nippon Paint',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+                fontSize: 18,
+              ),
+            ),
+            Text(
+              'Visualize Space',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.white70,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
         ),
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
@@ -716,19 +730,6 @@ class _EditorPageState extends State<EditorPage> {
             icon: const Icon(Icons.auto_awesome, color: Colors.amber),
             onPressed: _showAIPromptDialog,
             tooltip: 'AI Assistant',
-          ),
-          IconButton(
-            icon: Icon(
-              _showMask ? Icons.visibility : Icons.visibility_off,
-              color: _showMask ? Colors.greenAccent : Colors.white,
-            ),
-            onPressed: () {
-              setState(() {
-                _showMask = !_showMask;
-              });
-              _processImage();
-            },
-            tooltip: 'Toggle Mask View',
           ),
           IconButton(
             icon: const Icon(Icons.undo),
@@ -747,6 +748,11 @@ class _EditorPageState extends State<EditorPage> {
             },
             tooltip: 'Clear Selection',
           ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: _editedBytes != null ? _shareImage : null,
+            tooltip: 'Share Image',
+          ),
         ],
       ),
       body: Column(
@@ -758,15 +764,10 @@ class _EditorPageState extends State<EditorPage> {
                 builder: (context, constraints) {
                   return InteractiveViewer(
                     maxScale: 10.0,
-                    panEnabled: !_showMask,
+                    panEnabled: true,
                     child: GestureDetector(
                       onTapUp: (details) =>
                           _onImageTapped(details, constraints),
-                      onPanDown: (details) =>
-                          _onMaskPanDown(details, constraints),
-                      onPanUpdate: (details) =>
-                          _onMaskPanUpdate(details, constraints),
-                      onPanEnd: _onMaskPanEnd,
                       child: Stack(
                         children: [
                           if (_editedBytes != null)
@@ -793,19 +794,6 @@ class _EditorPageState extends State<EditorPage> {
                                     width: constraints.maxWidth,
                                     height: constraints.maxHeight,
                                     fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (_showMask && _originalImage != null)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: ObjectBoundsPainter(
-                                    _segmentationResult,
-                                    _originalImage!.width,
-                                    _originalImage!.height,
-                                    _globalSelectionBox,
                                   ),
                                 ),
                               ),
@@ -895,8 +883,9 @@ class _EditorPageState extends State<EditorPage> {
           ),
 
           // Bottom Tool Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          if (_taps.isNotEmpty || _aiMasks.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: const Color(0xFF1E1E1E),
               boxShadow: [
@@ -989,91 +978,3 @@ class _EditorPageState extends State<EditorPage> {
   }
 }
 
-class ObjectBoundsPainter extends CustomPainter {
-  final SubjectSegmentationResult? segmentationResult;
-  final int imageWidth;
-  final int imageHeight;
-  final math.Rectangle<int>? selectionBox;
-
-  ObjectBoundsPainter(this.segmentationResult, this.imageWidth, this.imageHeight, this.selectionBox);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final imageRatio = imageWidth / imageHeight;
-    final widgetRatio = size.width / size.height;
-
-    double renderWidth, renderHeight;
-    double offsetX = 0, offsetY = 0;
-
-    if (imageRatio > widgetRatio) {
-      renderWidth = size.width;
-      renderHeight = renderWidth / imageRatio;
-      offsetY = (size.height - renderHeight) / 2;
-    } else {
-      renderHeight = size.height;
-      renderWidth = renderHeight * imageRatio;
-      offsetX = (size.width - renderWidth) / 2;
-    }
-
-    final scaleX = renderWidth / imageWidth;
-    final scaleY = renderHeight / imageHeight;
-
-    if (segmentationResult != null) {
-      final subjectPaint = Paint()
-        ..color = Colors.white38
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-        
-      for (var subject in segmentationResult!.subjects) {
-        final rect = Rect.fromLTWH(
-          offsetX + subject.startX * scaleX,
-          offsetY + subject.startY * scaleY,
-          subject.width * scaleX,
-          subject.height * scaleY,
-        );
-        canvas.drawRect(rect, subjectPaint);
-      }
-    }
-
-    if (selectionBox != null) {
-      final rect = Rect.fromLTWH(
-        offsetX + selectionBox!.left * scaleX,
-        offsetY + selectionBox!.top * scaleY,
-        selectionBox!.width * scaleX,
-        selectionBox!.height * scaleY,
-      );
-      
-      final activePaint = Paint()
-        ..color = Colors.greenAccent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3.0;
-
-      final bgPaint = Paint()
-        ..color = Colors.greenAccent.withOpacity(0.2)
-        ..style = PaintingStyle.fill;
-        
-      canvas.drawRect(rect, bgPaint);
-      canvas.drawRect(rect, activePaint);
-      
-      final handlePaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
-      canvas.drawCircle(rect.centerLeft, 6, handlePaint);
-      canvas.drawCircle(rect.centerRight, 6, handlePaint);
-      canvas.drawCircle(rect.topCenter, 6, handlePaint);
-      canvas.drawCircle(rect.bottomCenter, 6, handlePaint);
-      
-      final textSpan = const TextSpan(
-        text: 'Selection Bounds',
-        style: TextStyle(color: Colors.white, fontSize: 10, backgroundColor: Colors.black54),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(rect.left, rect.top - 14));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant ObjectBoundsPainter oldDelegate) => true;
-}
