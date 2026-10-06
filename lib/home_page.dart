@@ -58,7 +58,12 @@ class _VisualizeTab extends StatelessWidget {
 
   Future<void> _pickImage(BuildContext context, ImageSource source) async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: source);
+    final pickedFile = await picker.pickImage(
+      source: source,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      imageQuality: 85,
+    );
     if (pickedFile != null) {
       if (context.mounted) {
         Navigator.push(

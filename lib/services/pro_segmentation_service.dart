@@ -8,7 +8,7 @@ import 'ai_segmentation_service.dart';
 class ProSegmentationService implements AISegmentationService {
   final String backendUrl;
 
-  ProSegmentationService({this.backendUrl = 'http://192.168.205.113:8000/api/v1/segment'});
+  ProSegmentationService({this.backendUrl = 'http://192.168.18.195:8000/api/v1/segment'});
 
   @override
   Future<AIMask?> segment({
