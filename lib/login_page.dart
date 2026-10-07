@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -70,6 +71,57 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  void _showSettingsDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentToken = prefs.getString('replicate_api_token') ?? '';
+    final tokenController = TextEditingController(text: currentToken);
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text('Developer Settings', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            controller: tokenController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Enter Replicate API Token',
+              hintStyle: const TextStyle(color: Colors.white54),
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.1),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
+              onPressed: () async {
+                await prefs.setString('replicate_api_token', tokenController.text);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('API Token saved successfully')),
+                  );
+                }
+              },
+              child: const Text('Save', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -108,23 +160,26 @@ class _LoginPageState extends State<LoginPage>
                         children: [
                           ScaleTransition(
                             scale: _logoScaleAnimation,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.2),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 5),
-                                  ),
-                                ],
-                              ),
-                              child: Image.asset(
-                                'assets/nippon_paint_logo.png',
-                                height: 60,
-                                fit: BoxFit.contain,
+                            child: GestureDetector(
+                              onLongPress: _showSettingsDialog,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ],
+                                ),
+                                child: Image.asset(
+                                  'assets/nippon_paint_logo.png',
+                                  height: 60,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
                             ),
                           ),

@@ -5,18 +5,25 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:mime/mime.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/ai_mask.dart';
 import 'ai_segmentation_service.dart';
 
 class ProSegmentationService implements AISegmentationService {
-  // Replace with your actual Replicate API Token
-  static const String _apiToken = 'YOUR_REPLICATE_API_TOKEN';
-  
   // Replace with the actual Replicate model ID you want to use
   static const String _modelEndpoint = 'https://api.replicate.com/v1/models/black-forest-labs/flux-kontext-dev/predictions';
 
+  Future<String?> _getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('replicate_api_token');
+    if (token == null || token.trim().isEmpty || token == 'YOUR_REPLICATE_API_TOKEN') {
+      return null;
+    }
+    return token.trim();
+  }
+
   Future<bool> isAvailable() async {
-    return _apiToken != 'YOUR_REPLICATE_API_TOKEN' && _apiToken.isNotEmpty;
+    return await _getToken() != null;
   }
 
   // Returns the directly edited image bytes from FLUX
@@ -31,11 +38,16 @@ class ProSegmentationService implements AISegmentationService {
       final base64Image = base64Encode(imageBytes);
       final dataUri = 'data:$mimeType;base64,$base64Image';
 
+      final token = await _getToken();
+      if (token == null) {
+        throw Exception('Replicate API Token is not configured. Please set it in the login page.');
+      }
+
       // 1. Start the prediction on Replicate
       var response = await http.post(
         Uri.parse(_modelEndpoint),
         headers: {
-          'Authorization': 'Bearer $_apiToken',
+          'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
           'Prefer': 'wait'
         },
@@ -65,7 +77,7 @@ class ProSegmentationService implements AISegmentationService {
       while (true) {
         var statusResponse = await http.get(
           Uri.parse(predictionUrl),
-          headers: {'Authorization': 'Bearer $_apiToken'},
+          headers: {'Authorization': 'Bearer $token'},
         );
 
         if (statusResponse.statusCode != 200) {
