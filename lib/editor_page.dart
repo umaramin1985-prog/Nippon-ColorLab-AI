@@ -473,6 +473,52 @@ class _EditorPageState extends State<EditorPage> {
       matchedColors = globalFandeckColors.where((c) => c.name.toLowerCase().contains(foundColorStr!)).toList();
     }
 
+    // In Pro Mode, we use FLUX to directly edit the image!
+    if (_currentAIMode == AIMode.pro) {
+      if (foundColorStr == null || matchedColors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please include a color (e.g., red, blue) in your prompt for Pro Mode.')),
+        );
+        return;
+      }
+
+      _showAIColorSelectionSheet(matchedColors, subject: null, onColorSelected: (selectedColor) async {
+        setState(() {
+          _isProcessing = true;
+        });
+
+        // Convert the Color to a HEX string (e.g., #FF0000)
+        String hexCode = '#${selectedColor.color.value.toRadixString(16).substring(2).toUpperCase()}';
+        
+        // Replace the color word in the prompt with the HEX code
+        String newPrompt = prompt.replaceFirst(RegExp(foundColorStr!, caseSensitive: false), hexCode);
+
+        final editedBytes = await _proSegmentationService.editImage(
+          imagePath: widget.imagePath,
+          prompt: newPrompt,
+        );
+
+        if (!mounted) return;
+
+        if (editedBytes != null) {
+          setState(() {
+            _editedBytes = editedBytes;
+            _isProcessing = false;
+            _editHistory.add(EditType.aiMask); // Add to history for undo
+          });
+        } else {
+          setState(() {
+            _isProcessing = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Failed to edit image with AI Pro.")),
+          );
+        }
+      });
+      return;
+    }
+
+    // In Lite Mode, fallback to original segmentation logic
     if (matchedColors.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not understand the color from your prompt.')),
@@ -497,9 +543,7 @@ class _EditorPageState extends State<EditorPage> {
       _isProcessing = true;
     });
 
-    AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
-
-    final mask = await service.segment(
+    final mask = await _liteSegmentationService.segment(
       imagePath: widget.imagePath,
       object: targetObject,
       position: position,
@@ -518,10 +562,10 @@ class _EditorPageState extends State<EditorPage> {
       return;
     }
     
-    _showAIColorSelectionSheet(matchedColors, mask);
+    _showAIColorSelectionSheet(matchedColors, subject: mask);
   }
 
-  void _showAIColorSelectionSheet(List<FandeckColor> colors, dynamic subject) {
+  void _showAIColorSelectionSheet(List<FandeckColor> colors, {dynamic subject, void Function(FandeckColor)? onColorSelected}) {
     final top10 = colors.take(10).toList();
     
     showModalBottomSheet(
@@ -554,10 +598,14 @@ class _EditorPageState extends State<EditorPage> {
                     .map(
                       (c) => GestureDetector(
                         onTap: () {
+                          Navigator.pop(context);
+                          if (onColorSelected != null) {
+                            onColorSelected(c);
+                            return;
+                          }
                           setState(() {
                             _targetColor = c.color;
                           });
-                          Navigator.pop(context);
                           
                           if (subject != null) {
                             setState(() {
