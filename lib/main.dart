@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'package:google_fonts/google_fonts.dart';
 import 'login_page.dart';
 import 'models.dart';
 
@@ -29,12 +30,18 @@ class RoomColorApp extends StatelessWidget {
       title: 'Nippon ColorLab AI',
       theme: ThemeData(
         brightness: Brightness.dark,
-        primaryColor: const Color(0xFFC8102E),
-        primarySwatch: Colors.red,
-        scaffoldBackgroundColor: const Color(0xFF121212),
+        primaryColor: const Color(0xFFFF204E),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFFF204E),
+          secondary: Color(0xFFFF204E),
+          surface: Color(0xFF1E1E2C),
+          background: Color(0xFF0B0C10),
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0B0C10),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1E1E1E),
+          backgroundColor: Colors.transparent,
           elevation: 0,
+          centerTitle: true,
         ),
         useMaterial3: true,
       ),

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'editor_page.dart';
 import 'browse_colors_page.dart';
 import 'login_page.dart';
+import 'saved_images_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,6 +21,7 @@ class _HomePageState extends State<HomePage> {
     final List<Widget> pages = [
       const _VisualizeTab(),
       const BrowseColorsPage(),
+      const SavedImagesPage(),
     ];
 
     return Scaffold(
@@ -34,9 +36,9 @@ class _HomePageState extends State<HomePage> {
             _currentIndex = index;
           });
         },
-        backgroundColor: const Color(0xFF1E1E1E),
-        selectedItemColor: const Color(0xFFC8102E),
-        unselectedItemColor: Colors.white54,
+        backgroundColor: const Color(0xFF0B0C10),
+        selectedItemColor: const Color(0xFFFF204E),
+        unselectedItemColor: Colors.white38,
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
@@ -46,6 +48,10 @@ class _HomePageState extends State<HomePage> {
           BottomNavigationBarItem(
             icon: Icon(Icons.color_lens),
             label: 'Colours',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.photo_album),
+            label: 'Saved',
           ),
         ],
       ),
@@ -101,9 +107,8 @@ class _VisualizeTab extends StatelessWidget {
           ],
         ),
         centerTitle: true,
-        backgroundColor: const Color(0xFFC8102E),
-        elevation: 10,
-        shadowColor: const Color(0xFFC8102E).withOpacity(0.5),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
@@ -121,7 +126,7 @@ class _VisualizeTab extends StatelessWidget {
         width: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF1E1E1E), Color(0xFF121212)],
+            colors: [Color(0xFF0B0C10), Color(0xFF1E1E2C)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -133,23 +138,23 @@ class _VisualizeTab extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.05),
+                color: const Color(0xFFFF204E).withOpacity(0.1),
                 border: Border.all(
-                  color: const Color(0xFFC8102E).withOpacity(0.3),
+                  color: const Color(0xFFFF204E).withOpacity(0.5),
                   width: 2,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFC8102E).withOpacity(0.1),
-                    blurRadius: 20,
-                    spreadRadius: 5,
+                    color: const Color(0xFFFF204E).withOpacity(0.3),
+                    blurRadius: 30,
+                    spreadRadius: 10,
                   ),
                 ],
               ),
               child: const Icon(
                 Icons.format_paint,
                 size: 80,
-                color: Color(0xFFC8102E),
+                color: Color(0xFFFF204E),
               ),
             ),
             const SizedBox(height: 32),
@@ -202,13 +207,14 @@ class _VisualizeTab extends StatelessWidget {
           ),
         ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2A2A2A),
+          backgroundColor: const Color(0xFF1E1E2C),
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.white.withOpacity(0.1)),
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.white.withOpacity(0.05)),
           ),
-          elevation: 5,
+          elevation: 10,
+          shadowColor: Colors.black.withOpacity(0.5),
         ),
       ),
     );

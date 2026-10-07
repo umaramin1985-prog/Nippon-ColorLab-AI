@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -321,6 +322,30 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
+  Future<void> _saveImage() async {
+    if (_editedBytes == null) return;
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final savedDir = Directory('${docDir.path}/saved_images');
+      if (!await savedDir.exists()) {
+        await savedDir.create(recursive: true);
+      }
+      final file = File('${savedDir.path}/image_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(_editedBytes!);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Image saved successfully! Check the Saved tab.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save image.')),
+        );
+      }
+    }
+  }
+
   Future<void> _processImage() async {
     if (_originalImage == null) return;
     if (_taps.isEmpty && _aiMasks.isEmpty) {
@@ -353,7 +378,7 @@ class _EditorPageState extends State<EditorPage> {
     });
   }
 
-  void _showColorPicker() {
+  void _showColorPicker({void Function(FandeckColor)? onColorSelected}) {
     String searchQuery = '';
     showDialog(
       context: context,
@@ -402,11 +427,16 @@ class _EditorPageState extends State<EditorPage> {
                           final c = filteredColors[index];
                           return GestureDetector(
                             onTap: () {
-                              setState(() {
-                                _targetColor = c.color;
-                              });
-                              Navigator.of(context).pop();
-                              _processImage();
+                              if (onColorSelected != null) {
+                                Navigator.of(context).pop();
+                                onColorSelected(c);
+                              } else {
+                                setState(() {
+                                  _targetColor = c.color;
+                                });
+                                Navigator.of(context).pop();
+                                _processImage();
+                              }
                             },
                             child: Container(
                               decoration: BoxDecoration(
@@ -681,6 +711,26 @@ class _EditorPageState extends State<EditorPage> {
                     )
                     .toList(),
               ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showColorPicker(onColorSelected: onColorSelected);
+                  },
+                  icon: const Icon(Icons.search),
+                  label: const Text('Search & Browse All Colors'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC8102E),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
             ],
           ),
@@ -784,61 +834,9 @@ class _EditorPageState extends State<EditorPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Nippon Paint',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.5,
-                fontSize: 18,
-              ),
-            ),
-            Text(
-              'Visualize Space',
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.white70,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: const Color(0xFFC8102E),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.auto_awesome, color: Colors.amber),
-            onPressed: _showAIPromptDialog,
-            tooltip: 'AI Assistant',
-          ),
-          IconButton(
-            icon: const Icon(Icons.undo),
-            onPressed: _editHistory.isEmpty ? null : _undoLast,
-            tooltip: 'Undo',
-          ),
-          IconButton(
-            icon: const Icon(Icons.clear_all),
-            onPressed: () {
-              setState(() {
-                _taps.clear();
-                _aiMasks.clear();
-                _editHistory.clear();
-              });
-              _processImage();
-            },
-            tooltip: 'Clear Selection',
-          ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _editedBytes != null ? _shareImage : null,
-            tooltip: 'Share Image',
-          ),
-        ],
-      ),
-      body: Column(
+      body: Stack(
+        children: [
+          Column(
         children: [
           Expanded(
             child: Container(
@@ -1057,7 +1055,92 @@ class _EditorPageState extends State<EditorPage> {
           ),
         ],
       ),
-    );
+      Positioned(
+        top: MediaQuery.of(context).padding.top + 16,
+        left: 16,
+        right: 16,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              height: 60,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(color: Colors.white24, width: 1.5),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Container(
+                    height: double.infinity,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFC8102E), Colors.deepOrange],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(26),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFC8102E).withOpacity(0.4),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        )
+                      ],
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: _showAIPromptDialog,
+                      icon: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
+                      label: const Text('AI Magic', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        shadowColor: Colors.transparent,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(26),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.undo, size: 22, color: _editHistory.isNotEmpty ? Colors.white : Colors.white38),
+                        onPressed: _editHistory.isNotEmpty ? _undoLast : null,
+                        tooltip: 'Undo',
+                      ),
+                      if (_editedBytes != null) ...[
+                        IconButton(
+                          icon: const Icon(Icons.save_alt, size: 22, color: Colors.white),
+                          onPressed: _saveImage,
+                          tooltip: 'Save',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.share, size: 22, color: Colors.white),
+                          onPressed: _shareImage,
+                          tooltip: 'Share',
+                        ),
+                      ]
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
+  ),
+);
   }
 }
 

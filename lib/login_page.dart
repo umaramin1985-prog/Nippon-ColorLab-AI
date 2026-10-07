@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui' as ui;
 import 'home_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -125,39 +126,64 @@ class _LoginPageState extends State<LoginPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF8B0000), Color(0xFF1E1E1E)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      body: Stack(
+        children: [
+          Container(color: const Color(0xFF0B0C10)),
+          Positioned(
+            top: -100,
+            left: -50,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFF204E).withOpacity(0.3),
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Stack(
-            children: [
-              Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(32.0),
-                  child: FadeTransition(
-                    opacity: _bgFadeAnimation,
-                    child: Container(
-                      padding: const EdgeInsets.all(32.0),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: Colors.white.withOpacity(0.2)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 15,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+          Positioned(
+            bottom: -50,
+            right: -100,
+            child: Container(
+              width: 250,
+              height: 250,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFC8102E).withOpacity(0.2),
+              ),
+            ),
+          ),
+          BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+            child: Container(color: Colors.transparent),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(32.0),
+                child: FadeTransition(
+                  opacity: _bgFadeAnimation,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        padding: const EdgeInsets.all(32.0),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1E2C).withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.5),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                           ScaleTransition(
                             scale: _logoScaleAnimation,
                             child: GestureDetector(
@@ -194,18 +220,18 @@ class _LoginPageState extends State<LoginPage>
                                     'Nippon Paint',
                                     style: TextStyle(
                                       fontSize: 28,
-                                      fontWeight: FontWeight.bold,
+                                      fontWeight: FontWeight.w900,
                                       color: Colors.white,
-                                      letterSpacing: 2,
+                                      letterSpacing: 1.5,
                                     ),
                                   ),
                                   const Text(
                                     'PAKISTAN',
                                     style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w300,
-                                      color: Colors.white70,
-                                      letterSpacing: 4,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: Color(0xFFFF204E),
+                                      letterSpacing: 5,
                                     ),
                                   ),
                                   const SizedBox(height: 48),
@@ -214,15 +240,12 @@ class _LoginPageState extends State<LoginPage>
                                     style: const TextStyle(color: Colors.white),
                                     decoration: InputDecoration(
                                       hintText: 'Username',
-                                      hintStyle: const TextStyle(color: Colors.white54),
-                                      prefixIcon: const Icon(
-                                        Icons.person,
-                                        color: Colors.white54,
-                                      ),
+                                      hintStyle: const TextStyle(color: Colors.white38),
+                                      prefixIcon: const Icon(Icons.person, color: Colors.white54),
                                       filled: true,
-                                      fillColor: Colors.white.withOpacity(0.1),
+                                      fillColor: Colors.black.withOpacity(0.2),
                                       border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius: BorderRadius.circular(16),
                                         borderSide: BorderSide.none,
                                       ),
                                     ),
@@ -234,15 +257,12 @@ class _LoginPageState extends State<LoginPage>
                                     obscureText: true,
                                     decoration: InputDecoration(
                                       hintText: 'Password',
-                                      hintStyle: const TextStyle(color: Colors.white54),
-                                      prefixIcon: const Icon(
-                                        Icons.lock,
-                                        color: Colors.white54,
-                                      ),
+                                      hintStyle: const TextStyle(color: Colors.white38),
+                                      prefixIcon: const Icon(Icons.lock, color: Colors.white54),
                                       filled: true,
-                                      fillColor: Colors.white.withOpacity(0.1),
+                                      fillColor: Colors.black.withOpacity(0.2),
                                       border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius: BorderRadius.circular(16),
                                         borderSide: BorderSide.none,
                                       ),
                                     ),
@@ -250,18 +270,17 @@ class _LoginPageState extends State<LoginPage>
                                   const SizedBox(height: 32),
                                   SizedBox(
                                     width: double.infinity,
-                                    height: 50,
+                                    height: 55,
                                     child: ElevatedButton(
                                       onPressed: _login,
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFFC8102E,
-                                        ), // Nippon Red
+                                        backgroundColor: const Color(0xFFFF204E),
                                         foregroundColor: Colors.white,
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(16),
                                         ),
-                                        elevation: 5,
+                                        elevation: 8,
+                                        shadowColor: const Color(0xFFFF204E).withOpacity(0.5),
                                       ),
                                       child: const Text(
                                         'LOGIN',
@@ -281,26 +300,27 @@ class _LoginPageState extends State<LoginPage>
                       ),
                     ),
                   ),
-                ),
-              ),
-              const Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'Powered by prynivo.com',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                      letterSpacing: 1.2,
-                    ),
+                  ), // closes ClipRRect
+                ), // closes FadeTransition
+              ), // closes SingleChildScrollView
+            ), // closes Center
+          ), // closes SafeArea
+          const Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text(
+                  'Powered by prynivo.com',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    letterSpacing: 1.2,
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ),
     );
   }
 }

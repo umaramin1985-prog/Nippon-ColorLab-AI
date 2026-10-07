@@ -45,6 +45,7 @@ dependencies:
   shared_preferences: ^2.5.6
   onnxruntime: ^1.4.1
   tokenizer: ^1.0.0
+  google_fonts: ^9.0.0
 
 dev_dependencies:
   flutter_test:
