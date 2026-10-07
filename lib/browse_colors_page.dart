@@ -1,5 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'models.dart';
 import 'login_page.dart';
 
@@ -169,6 +172,36 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
     );
   }
 
+  Future<void> _shareCatalog() async {
+    try {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/Nippon_Colour_Catalogue.csv');
+      
+      final sb = StringBuffer();
+      sb.writeln('Name,HEX,R,G,B');
+      for (var c in globalFandeckColors) {
+        sb.writeln('"${c.name}",#${c.hex},${c.r},${c.g},${c.b}');
+      }
+      
+      await file.writeAsString(sb.toString());
+      
+      await Share.shareXFiles(
+        [XFile(file.path)], 
+        text: '🎨 Nippon Paint Complete Colour Catalogue',
+        subject: 'Nippon Paint Colour Catalogue',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sharing catalog: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final query = _searchQuery.toLowerCase().replaceAll('#', '');
@@ -188,6 +221,11 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.share, color: Colors.white),
+            tooltip: 'Share Catalogue',
+            onPressed: _shareCatalog,
+          ),
           if (!widget.isPicker)
             IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
