@@ -59,14 +59,14 @@ class _LoginPageState extends State<LoginPage>
   void _login() {
     final user = _usernameController.text;
     final pass = _passwordController.text;
-    if (user.isNotEmpty && pass.isNotEmpty) {
+    if (user == 'admin' && pass == 'umar18123') {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter valid dummy credentials')),
+        const SnackBar(content: Text('Invalid credentials')),
       );
     }
   }
