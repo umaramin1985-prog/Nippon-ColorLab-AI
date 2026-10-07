@@ -12,6 +12,7 @@ import 'models/ai_mask.dart';
 import 'services/ai_segmentation_service.dart';
 import 'services/lite_segmentation_service.dart';
 import 'services/pro_segmentation_service.dart';
+import 'services/lite_prompt_parser.dart';
 
 enum EditType { tap, aiMask }
 
@@ -490,8 +491,11 @@ class _EditorPageState extends State<EditorPage> {
         // Convert the Color to a HEX string (e.g., #FF0000)
         String hexCode = '#${selectedColor.color.value.toRadixString(16).substring(2).toUpperCase()}';
         
-        // Replace the color word in the prompt with the HEX code
-        String newPrompt = prompt.replaceFirst(RegExp(foundColorStr!, caseSensitive: false), hexCode);
+        // Replace the color word in the prompt with the semantic color name AND the HEX code
+        String newPrompt = prompt.replaceFirst(
+          RegExp(foundColorStr!, caseSensitive: false), 
+          "exact ${selectedColor.name} paint color (hex code $hexCode)"
+        );
 
         final editedBytes = await _proSegmentationService.editImage(
           imagePath: widget.imagePath,
@@ -518,36 +522,53 @@ class _EditorPageState extends State<EditorPage> {
       return;
     }
 
-    // In Lite Mode, fallback to original segmentation logic
-    if (matchedColors.isEmpty) {
+    // --- LITE MODE (OFFLINE PIPELINE) ---
+    final parsedCommand = LitePromptParser.parse(prompt);
+    
+    if (parsedCommand == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not understand the color from your prompt.')),
+        const SnackBar(content: Text('Could not understand the color or object from your prompt.')),
       );
       return;
     }
+    
+    // Find matching Fandeck colors using the color name parsed by LitePromptParser
+    List<FandeckColor> liteMatchedColors = globalFandeckColors.where((c) {
+      // Find the color word that matched (we know it's in the original prompt if parsedCommand != null)
+      // For simplicity, we just use the original matchedColors if it has items, or we can search again.
+      // But we can just use the foundColorStr from earlier since it works well for both.
+      return c.name.toLowerCase().contains(foundColorStr ?? '');
+    }).toList();
 
-    String targetObject = 'wall';
-    if (lowerPrompt.contains('ceiling') || lowerPrompt.contains('roof')) targetObject = 'ceiling';
-    if (lowerPrompt.contains('floor') || lowerPrompt.contains('ground') || lowerPrompt.contains('carpet')) targetObject = 'floor';
-    if (lowerPrompt.contains('door')) targetObject = 'door';
-    if (lowerPrompt.contains('cabinet')) targetObject = 'cabinet';
-
-    String? position;
-    if (lowerPrompt.contains('left')) position = 'left';
-    if (lowerPrompt.contains('right')) position = 'right';
-    if (lowerPrompt.contains('top')) position = 'top';
-    if (lowerPrompt.contains('bottom')) position = 'bottom';
-    if (lowerPrompt.contains('center')) position = 'center';
+    if (liteMatchedColors.isEmpty) {
+      // Fallback: match by closest RGB? For now, if no fandeck color matches exactly by name, we just show top colors
+      liteMatchedColors = globalFandeckColors.take(10).toList(); 
+    }
 
     setState(() {
       _isProcessing = true;
     });
 
-    final mask = await _liteSegmentationService.segment(
-      imagePath: widget.imagePath,
-      object: targetObject,
-      position: position,
-    );
+    // Phase 1: Use ML Kit as a stand-in for SAM segmentation using the parsed objectName
+    // (Phase 2 will replace this with MobileSAM + MobileCLIP ONNX inference)
+    AIMask? mask;
+    try {
+      mask = await _liteSegmentationService.segment(
+        imagePath: widget.imagePath,
+        object: parsedCommand.objectName,
+        position: null,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Seg Error: $e"), duration: Duration(seconds: 10)),
+        );
+      }
+      return;
+    }
 
     if (!mounted) return;
 
@@ -557,12 +578,12 @@ class _EditorPageState extends State<EditorPage> {
 
     if (mask == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("We couldn't confidently detect the requested surface. Try another description or use manual selection.")),
+        SnackBar(content: Text("Could not confidently detect a '${parsedCommand.objectName}' in this image.")),
       );
       return;
     }
     
-    _showAIColorSelectionSheet(matchedColors, subject: mask);
+    _showAIColorSelectionSheet(liteMatchedColors, subject: mask);
   }
 
   void _showAIColorSelectionSheet(List<FandeckColor> colors, {dynamic subject, void Function(FandeckColor)? onColorSelected}) {

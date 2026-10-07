@@ -44,3 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# AI Models (downloaded via python script)
+assets/models/
+
+# Python / Scripts
+venv/
+.env
+.DS_Store

@@ -43,6 +43,8 @@ dependencies:
   http: ^1.6.0
   mime: ^2.1.0
   shared_preferences: ^2.5.6
+  onnxruntime: ^1.4.1
+  tokenizer: ^1.0.0
 
 dev_dependencies:
   flutter_test:
@@ -69,6 +71,11 @@ flutter:
 
   assets:
     - assets/
+    - assets/models/mobilesam/mobile_sam_image_encoder.onnx
+    - assets/models/mobilesam/sam_mask_decoder_single.onnx
+    - assets/models/mobileclip/tokenizer.json
+    - assets/models/mobileclip/onnx/text_model.onnx
+    - assets/models/mobileclip/onnx/vision_model.onnx
 
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a
