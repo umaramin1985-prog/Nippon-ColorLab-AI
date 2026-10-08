@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -27,6 +28,18 @@ class EditorPage extends StatefulWidget {
   State<EditorPage> createState() => _EditorPageState();
 }
 
+// Top-level function to avoid capturing `this` (the Flutter State) in Isolate.
+List<dynamic>? _decodeAndEncodeImage(Uint8List bytes) {
+  try {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return null;
+    final encoded = img.encodePng(decoded);
+    return [decoded, encoded];
+  } catch (e) {
+    return null;
+  }
+}
+
 class _EditorPageState extends State<EditorPage> {
   img.Image? _originalImage;
   Uint8List? _originalBytes;
@@ -37,11 +50,32 @@ class _EditorPageState extends State<EditorPage> {
 
   Color _targetColor = globalFandeckColors.isNotEmpty ? globalFandeckColors.first.color : Colors.white;
   double _tolerance = 0.1;
-  List<math.Point<int>> _taps = [];
-  List<AIMask> _aiMasks = [];
+  List<TapEdit> _tapEdits = [];
+  List<MaskEdit> _maskEdits = [];
   List<EditType> _editHistory = [];
 
-  double _sliderPosition = 0.5;
+  void _updateLastEditColor(Color color) {
+    if (_editHistory.isEmpty) return;
+    final last = _editHistory.last;
+    if (last == EditType.tap && _tapEdits.isNotEmpty) {
+      final lastEdit = _tapEdits.last;
+      _tapEdits[_tapEdits.length - 1] = TapEdit(lastEdit.point, color, lastEdit.tolerance);
+    } else if (last == EditType.aiMask && _maskEdits.isNotEmpty) {
+      final lastEdit = _maskEdits.last;
+      _maskEdits[_maskEdits.length - 1] = MaskEdit(lastEdit.mask, color);
+    }
+  }
+
+  void _updateLastEditTolerance(double tol) {
+    if (_editHistory.isEmpty) return;
+    final last = _editHistory.last;
+    if (last == EditType.tap && _tapEdits.isNotEmpty) {
+      final lastEdit = _tapEdits.last;
+      _tapEdits[_tapEdits.length - 1] = TapEdit(lastEdit.point, lastEdit.color, tol);
+    }
+  }
+
+  double _sliderPosition = 0.25; // Show a quarter of the original image
 
 
 
@@ -79,17 +113,32 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Future<void> _loadImage() async {
-    final bytes = await XFile(widget.imagePath).readAsBytes();
-    final decoded = img.decodeImage(bytes);
+    try {
+      final bytes = await XFile(widget.imagePath).readAsBytes();
+      
+      // Use Flutter's compute() to execute the top-level function.
+      // We pass `bytes` directly. Unlike Isolate.run(() => ...), compute does NOT 
+      // require an anonymous closure, guaranteeing `this` is not captured.
+      final result = await compute(_decodeAndEncodeImage, bytes);
 
-    if (decoded != null) {
-      setState(() {
-        _originalImage = decoded;
-        _originalBytes = img.encodePng(decoded);
-        _editedBytes = _originalBytes;
-        
-        _isLoading = false;
-      });
+      if (result != null && mounted) {
+        setState(() {
+          _originalImage = result[0] as img.Image;
+          _originalBytes = result[1] as Uint8List;
+          _editedBytes = _originalBytes;
+          _isLoading = false;
+        });
+      } else {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint("Error loading image: $e");
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Load Error: $e")),
+        );
+      }
     }
   }
 
@@ -147,27 +196,15 @@ class _EditorPageState extends State<EditorPage> {
     }
 
     if (mask != null && mounted) {
-      setState(() {
-        _aiMasks.add(mask!);
-        _editHistory.add(EditType.aiMask);
-      });
       foundAISubject = true;
     }
 
-    if (!foundAISubject && mounted) {
-      setState(() {
-        _taps.add(pt);
-        _editHistory.add(EditType.tap);
-      });
-    }
-
     if (mounted) {
-      _suggestColors(pt);
-      _processImage();
+      _suggestColors(pt, mask: mask);
     }
   }
 
-  void _suggestColors(math.Point<int> pt) {
+  void _suggestColors(math.Point<int> pt, {AIMask? mask}) {
     if (_originalImage == null || globalFandeckColors.isEmpty) return;
 
     final pixel = _originalImage!.getPixel(pt.x, pt.y);
@@ -201,7 +238,7 @@ class _EditorPageState extends State<EditorPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'Suggested Matching Colors',
+                'Select a Color',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -218,6 +255,13 @@ class _EditorPageState extends State<EditorPage> {
                         onTap: () {
                           setState(() {
                             _targetColor = c.color;
+                            if (mask != null) {
+                              _maskEdits.add(MaskEdit(mask, c.color));
+                              _editHistory.add(EditType.aiMask);
+                            } else {
+                              _tapEdits.add(TapEdit(pt, c.color, _tolerance));
+                              _editHistory.add(EditType.tap);
+                            }
                           });
                           Navigator.pop(context);
                           _processImage();
@@ -269,7 +313,19 @@ class _EditorPageState extends State<EditorPage> {
                 child: ElevatedButton.icon(
                   onPressed: () {
                     Navigator.pop(context);
-                    _showColorPicker();
+                    _showColorPicker(onColorSelected: (c) {
+                      setState(() {
+                        _targetColor = c.color;
+                        if (mask != null) {
+                          _maskEdits.add(MaskEdit(mask, c.color));
+                          _editHistory.add(EditType.aiMask);
+                        } else {
+                          _tapEdits.add(TapEdit(pt, c.color, _tolerance));
+                          _editHistory.add(EditType.tap);
+                        }
+                      });
+                      _processImage();
+                    });
                   },
                   icon: const Icon(Icons.search),
                   label: const Text('Search & Browse All Colors'),
@@ -299,9 +355,9 @@ class _EditorPageState extends State<EditorPage> {
     setState(() {
       final last = _editHistory.removeLast();
       if (last == EditType.tap) {
-        if (_taps.isNotEmpty) _taps.removeLast();
+        if (_tapEdits.isNotEmpty) _tapEdits.removeLast();
       } else if (last == EditType.aiMask) {
-        if (_aiMasks.isNotEmpty) _aiMasks.removeLast();
+        if (_maskEdits.isNotEmpty) _maskEdits.removeLast();
       }
     });
 
@@ -355,8 +411,8 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Future<void> _processImage() async {
-    if (_originalImage == null) return;
-    if (_taps.isEmpty && _aiMasks.isEmpty) {
+    if (_originalImage == null || _originalBytes == null) return;
+    if (_tapEdits.isEmpty && _maskEdits.isEmpty) {
       setState(() {
         _editedBytes = _originalBytes;
       });
@@ -367,23 +423,35 @@ class _EditorPageState extends State<EditorPage> {
       _isProcessing = true;
     });
 
-    final params = ProcessImageParams(
-      image: _originalImage!,
-      taps: _taps,
-      aiMasks: _aiMasks,
-      manualStrokes: [],
-      targetColor: _targetColor,
-      tolerance: _tolerance,
-      showMaskOverlay: false,
-    );
+    try {
+      final params = ProcessImageParams(
+        imageBytes: _originalBytes!,
+        tapEdits: _tapEdits,
+        maskEdits: _maskEdits,
+        manualStrokes: [],
+        showMaskOverlay: false,
+      );
 
-    final result = await processImage(params);
-    final resultBytes = img.encodePng(result);
+      final resultBytes = await processImage(params);
 
-    setState(() {
-      _editedBytes = resultBytes;
-      _isProcessing = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        if (resultBytes != null) {
+          _editedBytes = resultBytes;
+        }
+        _isProcessing = false;
+      });
+    } catch (e) {
+      debugPrint("Error processing image: $e");
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to apply color: $e')),
+        );
+      }
+    }
   }
 
   void _showColorPicker({void Function(FandeckColor)? onColorSelected}) {
@@ -441,6 +509,7 @@ class _EditorPageState extends State<EditorPage> {
                               } else {
                                 setState(() {
                                   _targetColor = c.color;
+                                  _updateLastEditColor(c.color);
                                 });
                                 Navigator.of(context).pop();
                                 _processImage();
@@ -561,73 +630,76 @@ class _EditorPageState extends State<EditorPage> {
     }
 
     // --- LITE MODE (OFFLINE PIPELINE) ---
-    final parsedCommand = LitePromptParser.parse(prompt);
+    final parsedCommands = LitePromptParser.parse(prompt);
     
-    if (parsedCommand == null) {
+    if (parsedCommands.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not understand the color or object from your prompt.')),
       );
       return;
     }
     
-    // Find matching Fandeck colors using the color name parsed by LitePromptParser
-    List<FandeckColor> liteMatchedColors = globalFandeckColors.where((c) {
-      // Find the color word that matched (we know it's in the original prompt if parsedCommand != null)
-      // For simplicity, we just use the original matchedColors if it has items, or we can search again.
-      // But we can just use the foundColorStr from earlier since it works well for both.
-      return c.name.toLowerCase().contains(foundColorStr ?? '');
-    }).toList();
+    for (var parsedCommand in parsedCommands) {
+      // Find matching Fandeck colors using the color name parsed by LitePromptParser
+      List<FandeckColor> liteMatchedColors = globalFandeckColors.where((c) {
+        String colorWord = parsedCommand.targetColor.toString(); // Just a fallback, better to use the found string but LitePromptParser returns Color object.
+        // Wait, LitePromptParser matches color names from its internal dict. We can search fandeck colors by matching the closest RGB, or just use the first 10.
+        // Actually, let's find the FandeckColors closest to parsedCommand.targetColor
+        return true;
+      }).toList();
 
-    if (liteMatchedColors.isEmpty) {
-      // Fallback: match by closest RGB? For now, if no fandeck color matches exactly by name, we just show top colors
-      liteMatchedColors = globalFandeckColors.take(10).toList(); 
-    }
+      liteMatchedColors.sort((a, b) {
+        final d1 = math.pow(a.color.red - parsedCommand.targetColor.red, 2) + math.pow(a.color.green - parsedCommand.targetColor.green, 2) + math.pow(a.color.blue - parsedCommand.targetColor.blue, 2);
+        final d2 = math.pow(b.color.red - parsedCommand.targetColor.red, 2) + math.pow(b.color.green - parsedCommand.targetColor.green, 2) + math.pow(b.color.blue - parsedCommand.targetColor.blue, 2);
+        return d1.compareTo(d2);
+      });
 
-    setState(() {
-      _isProcessing = true;
-    });
+      final topColors = liteMatchedColors.take(10).toList();
 
-    // Phase 1: Use ML Kit as a stand-in for SAM segmentation using the parsed objectName
-    // (Phase 2 will replace this with MobileSAM + MobileCLIP ONNX inference)
-    AIMask? mask;
-    try {
-      mask = await _liteSegmentationService.segment(
-        imagePath: widget.imagePath,
-        object: parsedCommand.objectName,
-        position: null,
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Seg Error: $e"), duration: Duration(seconds: 10)),
+      setState(() {
+        _isProcessing = true;
+      });
+
+      AIMask? mask;
+      try {
+        mask = await _liteSegmentationService.segment(
+          imagePath: widget.imagePath,
+          object: parsedCommand.objectName,
+          position: null,
         );
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Seg Error: $e"), duration: const Duration(seconds: 10)),
+          );
+        }
+        continue;
       }
-      return;
+
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessing = false;
+      });
+
+      if (mask == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Could not confidently detect a '${parsedCommand.objectName}' in this image.")),
+        );
+        continue;
+      }
+      
+      await _showAIColorSelectionSheet(topColors, subject: mask, title: "Select a Shade for ${parsedCommand.objectName}");
     }
-
-    if (!mounted) return;
-
-    setState(() {
-      _isProcessing = false;
-    });
-
-    if (mask == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Could not confidently detect a '${parsedCommand.objectName}' in this image.")),
-      );
-      return;
-    }
-    
-    _showAIColorSelectionSheet(liteMatchedColors, subject: mask);
   }
 
-  void _showAIColorSelectionSheet(List<FandeckColor> colors, {dynamic subject, void Function(FandeckColor)? onColorSelected}) {
+  Future<void> _showAIColorSelectionSheet(List<FandeckColor> colors, {dynamic subject, void Function(FandeckColor)? onColorSelected, String title = 'Select a Shade'}) async {
     final top10 = colors.take(10).toList();
     
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
@@ -641,9 +713,9 @@ class _EditorPageState extends State<EditorPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Select a Shade',
-                style: TextStyle(
+              Text(
+                title,
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -668,12 +740,12 @@ class _EditorPageState extends State<EditorPage> {
                           
                           if (subject != null) {
                             setState(() {
-                              _aiMasks.add(subject);
+                              _maskEdits.add(MaskEdit(subject, c.color));
                               _editHistory.add(EditType.aiMask);
                             });
                           } else {
                             setState(() {
-                              _taps.add(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2));
+                              _tapEdits.add(TapEdit(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2), c.color, _tolerance));
                               _editHistory.add(EditType.tap);
                             });
                           }
@@ -887,6 +959,7 @@ class _EditorPageState extends State<EditorPage> {
                                 ),
                               ),
                             ),
+
                           Positioned(
                             left: constraints.maxWidth * _sliderPosition - 15,
                             top: 0,
@@ -972,7 +1045,7 @@ class _EditorPageState extends State<EditorPage> {
           ),
 
           // Bottom Tool Bar
-          if (_taps.isNotEmpty || _aiMasks.isNotEmpty)
+          if (_tapEdits.isNotEmpty || _maskEdits.isNotEmpty)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -1041,6 +1114,7 @@ class _EditorPageState extends State<EditorPage> {
                           onChanged: (value) {
                             setState(() {
                               _tolerance = value;
+                              _updateLastEditTolerance(value);
                             });
                           },
                           onChangeEnd: (value) {

@@ -33,40 +33,71 @@ class LitePromptParser {
     'make', 'change', 'turn', 'recolor', 'paint', 'the', 'to', 'into', 'a', 'an'
   ];
 
-  static ImageEditCommand? parse(String prompt) {
+  static List<ImageEditCommand> parse(String prompt) {
     final lowerPrompt = prompt.toLowerCase();
     
-    // 1. Find the target color
-    String? foundColorName;
-    Color? foundColor;
+    // Split the prompt by conjunctions or punctuation to handle multiple requests
+    // e.g. "make the wall red and the ceiling blue" -> ["make the wall red", "the ceiling blue"]
+    final chunks = lowerPrompt.split(RegExp(r'\b(and|then|,|&)\b'));
+    
+    List<ImageEditCommand> commands = [];
+    
+    for (var chunk in chunks) {
+      if (chunk.trim().isEmpty) continue;
+      
+      String? foundColorName;
+      Color? foundColor;
 
-    for (var entry in _colorDict.entries) {
-      if (lowerPrompt.contains(entry.key)) {
-        foundColorName = entry.key;
-        foundColor = entry.value;
-        break; // Match the first color found
+      for (var entry in _colorDict.entries) {
+        if (chunk.contains(entry.key)) {
+          foundColorName = entry.key;
+          foundColor = entry.value;
+          break; // Match the first color found in this chunk
+        }
+      }
+
+      if (foundColorName != null && foundColor != null) {
+        String remainingText = chunk.replaceAll(foundColorName, '').trim();
+        for (var word in _ignoreWords) {
+          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), '').trim();
+        }
+
+        remainingText = remainingText.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+        if (remainingText.isEmpty) {
+          remainingText = 'wall'; // Fallback
+        }
+
+        commands.add(ImageEditCommand(remainingText, foundColor));
+      }
+    }
+    
+    // Fallback: If no commands were parsed with splitting, try parsing the whole prompt
+    if (commands.isEmpty) {
+      String? foundColorName;
+      Color? foundColor;
+
+      for (var entry in _colorDict.entries) {
+        if (lowerPrompt.contains(entry.key)) {
+          foundColorName = entry.key;
+          foundColor = entry.value;
+          break;
+        }
+      }
+      
+      if (foundColorName != null && foundColor != null) {
+        String remainingText = lowerPrompt.replaceAll(foundColorName, '').trim();
+        for (var word in _ignoreWords) {
+          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), '').trim();
+        }
+        remainingText = remainingText.replaceAll(RegExp(r'\s+'), ' ').trim();
+        if (remainingText.isEmpty) {
+          remainingText = 'wall';
+        }
+        commands.add(ImageEditCommand(remainingText, foundColor));
       }
     }
 
-    if (foundColorName == null || foundColor == null) {
-      return null; // Could not determine color
-    }
-
-    // 2. Extract the object name
-    // We remove the color word and common ignore words to find the object
-    String remainingText = lowerPrompt.replaceAll(foundColorName, '').trim();
-    for (var word in _ignoreWords) {
-      // Use regex to remove whole words only
-      remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), '').trim();
-    }
-
-    // Clean up multiple spaces
-    remainingText = remainingText.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    if (remainingText.isEmpty) {
-      remainingText = 'wall'; // Fallback if no specific object is mentioned
-    }
-
-    return ImageEditCommand(remainingText, foundColor);
+    return commands;
   }
 }

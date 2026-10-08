@@ -9,55 +9,110 @@ class Stroke {
   final List<math.Point<int>> points;
   final double brushSize;
   final bool isEraser;
+  final Color color;
 
-  Stroke(this.points, this.brushSize, this.isEraser);
+  Stroke(this.points, this.brushSize, this.isEraser, this.color);
+}
+
+class TapEdit {
+  final math.Point<int> point;
+  final Color color;
+  final double tolerance;
+
+  TapEdit(this.point, this.color, this.tolerance);
+}
+
+class MaskEdit {
+  final AIMask mask;
+  final Color color;
+
+  MaskEdit(this.mask, this.color);
 }
 
 class ProcessImageParams {
-  final img.Image image;
-  final List<math.Point<int>> taps;
-  final List<AIMask> aiMasks;
+  final Uint8List imageBytes;
+  final List<TapEdit> tapEdits;
+  final List<MaskEdit> maskEdits;
   final List<Stroke> manualStrokes;
-  final Color targetColor;
-  final double tolerance;
   final bool showMaskOverlay;
 
   ProcessImageParams({
-    required this.image,
-    required this.taps,
-    this.aiMasks = const [],
+    required this.imageBytes,
+    this.tapEdits = const [],
+    this.maskEdits = const [],
     this.manualStrokes = const [],
-    required this.targetColor,
-    required this.tolerance,
     this.showMaskOverlay = false,
   });
 }
 
-Future<img.Image> processImage(ProcessImageParams params) async {
-  return await Isolate.run(() => _floodFillColorize(params));
+Future<Uint8List?> processImage(ProcessImageParams params) async {
+  return await Isolate.run(() {
+    final image = img.decodeImage(params.imageBytes);
+    if (image == null) return null;
+    final result = _floodFillColorize(image, params);
+    return img.encodePng(result);
+  });
 }
 
-img.Image _floodFillColorize(ProcessImageParams params) {
-  final image = params.image;
-  final taps = params.taps;
-  final targetColor = params.targetColor;
-  final tolerance = params.tolerance;
-  final aiMasks = params.aiMasks;
+img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
+  final tapEdits = params.tapEdits;
+  final maskEdits = params.maskEdits;
   final manualStrokes = params.manualStrokes;
   final showMaskOverlay = params.showMaskOverlay;
 
-  if (taps.isEmpty && aiMasks.isEmpty && manualStrokes.isEmpty)
+  if (tapEdits.isEmpty && maskEdits.isEmpty && manualStrokes.isEmpty)
     return image.clone();
 
   final result = image.clone();
   final width = result.width;
   final height = result.height;
 
-  // 1. Create a unified alpha mask
-  final alphaMask = List<double>.filled(width * height, 0.0);
+  void applyColorToMask(List<double> alphaMask, Color color) {
+    final tR = color.red;
+    final tG = color.green;
+    final tB = color.blue;
+    final targetLab = _rgbToLab(tR, tG, tB);
+    final strength = 0.85; 
 
-  // 2. Apply AI Masks to the mask array
-  for (var aiMask in aiMasks) {
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final maskAlpha = alphaMask[y * width + x];
+        if (maskAlpha <= 0.05) continue;
+        
+        final effectiveAlpha = maskAlpha;
+        
+        if (showMaskOverlay) {
+          result.setPixelRgb(x, y, 0, (255 * effectiveAlpha).toInt(), 0);
+        } else {
+          final p = image.getPixel(x, y); 
+          final currentP = result.getPixel(x, y); 
+          
+          final originalLab = _rgbToLab(p.r, p.g, p.b);
+          double newL = originalLab[0];
+          
+          double localStrength = strength;
+          if (newL < 15.0) localStrength *= (newL / 15.0); 
+          if (newL > 90.0) localStrength *= ((100.0 - newL) / 10.0);
+
+          double newA = originalLab[1] * (1 - localStrength) + targetLab[1] * localStrength;
+          double newB = originalLab[2] * (1 - localStrength) + targetLab[2] * localStrength;
+
+          final newRgb = _labToRgb(newL, newA, newB);
+
+          final blendR = (currentP.r * (1 - effectiveAlpha) + newRgb[0] * effectiveAlpha).toInt().clamp(0, 255);
+          final blendG = (currentP.g * (1 - effectiveAlpha) + newRgb[1] * effectiveAlpha).toInt().clamp(0, 255);
+          final blendB = (currentP.b * (1 - effectiveAlpha) + newRgb[2] * effectiveAlpha).toInt().clamp(0, 255);
+
+          result.setPixelRgb(x, y, blendR, blendG, blendB);
+        }
+      }
+    }
+  }
+
+  // Process MaskEdits
+  for (final maskEdit in maskEdits) {
+    final alphaMask = List<double>.filled(width * height, 0.0);
+    final aiMask = maskEdit.mask;
     for (int my = 0; my < aiMask.height; my++) {
       for (int mx = 0; mx < aiMask.width; mx++) {
         final confidence = aiMask.confidenceMask[my * aiMask.width + mx];
@@ -65,59 +120,53 @@ img.Image _floodFillColorize(ProcessImageParams params) {
           int py = aiMask.startY + my;
           int px = aiMask.startX + mx;
           if (px >= 0 && px < width && py >= 0 && py < height) {
-            // Take the max confidence if masks overlap
             alphaMask[py * width + px] = math.max(alphaMask[py * width + px], confidence);
           }
         }
       }
     }
+    applyColorToMask(alphaMask, maskEdit.color);
   }
 
-  // 3. Apply Flood Fill taps to the mask array
-  if (taps.isNotEmpty) {
+  // Process TapEdits
+  for (final tapEdit in tapEdits) {
+    final alphaMask = List<double>.filled(width * height, 0.0);
     final visited = List<bool>.filled(width * height, false);
     final queue = <int>[];
-    final tapColors = <math.Point<int>, List<num>>{};
+    
+    final tap = tapEdit.point;
+    if (tap.x < 0 || tap.x >= width || tap.y < 0 || tap.y >= height) continue;
+    
+    final p = image.getPixel(tap.x, tap.y);
+    final startColor = [p.r, p.g, p.b];
+    queue.add(tap.y * width + tap.x);
+    visited[tap.y * width + tap.x] = true;
 
-    for (final tap in taps) {
-      if (tap.x < 0 || tap.x >= width || tap.y < 0 || tap.y >= height) continue;
-      final p = image.getPixel(tap.x, tap.y);
-      tapColors[tap] = [p.r, p.g, p.b];
-      queue.add(tap.y * width + tap.x);
-      visited[tap.y * width + tap.x] = true;
-    }
-
-    final tolSq = tolerance * tolerance * 255 * 255 * 3;
-    final edgeTolSq = (tolerance * 1.5) * (tolerance * 1.5) * 255 * 255 * 3;
+    final tolSq = tapEdit.tolerance * tapEdit.tolerance * 255 * 255 * 3;
+    final edgeTolSq = (tapEdit.tolerance * 1.5) * (tapEdit.tolerance * 1.5) * 255 * 255 * 3;
 
     while (queue.isNotEmpty) {
       final idx = queue.removeLast();
       final x = idx % width;
       final y = idx ~/ width;
-      final p = image.getPixel(x, y);
+      
+      final cp = image.getPixel(x, y);
 
-      bool withinTolerance = false;
-      for (final startColor in tapColors.values) {
-        final dr = p.r - startColor[0];
-        final dg = p.g - startColor[1];
-        final db = p.b - startColor[2];
-        if ((dr * dr + dg * dg + db * db) <= tolSq) {
-          withinTolerance = true;
-          break;
-        }
-      }
-
-      if (withinTolerance) {
+      final dr = cp.r - startColor[0];
+      final dg = cp.g - startColor[1];
+      final db = cp.b - startColor[2];
+      
+      if ((dr * dr + dg * dg + db * db) <= tolSq) {
         alphaMask[y * width + x] = 1.0;
 
         void tryAdd(int nx, int ny) {
           final nidx = ny * width + nx;
           if (!visited[nidx]) {
             final np = image.getPixel(nx, ny);
-            final dr = p.r - np.r;
-            final dg = p.g - np.g;
-            final db = p.b - np.b;
-            if ((dr * dr + dg * dg + db * db) <= edgeTolSq) {
+            final ndr = cp.r - np.r;
+            final ndg = cp.g - np.g;
+            final ndb = cp.b - np.b;
+            if ((ndr * ndr + ndg * ndg + ndb * ndb) <= edgeTolSq) {
               queue.add(nidx);
               visited[nidx] = true;
             }
@@ -130,10 +179,12 @@ img.Image _floodFillColorize(ProcessImageParams params) {
         if (y < height - 1) tryAdd(x, y + 1);
       }
     }
+    applyColorToMask(alphaMask, tapEdit.color);
   }
 
-  // 4. Apply Manual Strokes (Brush/Eraser)
+  // Process ManualStrokes
   for (final stroke in manualStrokes) {
+    final alphaMask = List<double>.filled(width * height, 0.0);
     final r = stroke.brushSize.toInt();
     final rSq = r * r;
     for (final pt in stroke.points) {
@@ -149,46 +200,16 @@ img.Image _floodFillColorize(ProcessImageParams params) {
         }
       }
     }
-  }
-
-  // 5. Colorize the final mask using LAB color space
-  final tR = targetColor.red;
-  final tG = targetColor.green;
-  final tB = targetColor.blue;
-  final targetLab = _rgbToLab(tR, tG, tB);
-  
-  final strength = 0.85; // Recolor strength parameter (0.7 - 0.9 recommended)
-
-  for (int y = 0; y < height; y++) {
-    for (int x = 0; x < width; x++) {
-      final maskAlpha = alphaMask[y * width + x];
-      
-      if (maskAlpha > 0.05) {
-        if (showMaskOverlay) {
-          result.setPixelRgb(x, y, 0, (255 * maskAlpha).toInt(), 0);
-        } else {
-          final p = image.getPixel(x, y);
-          final originalLab = _rgbToLab(p.r, p.g, p.b);
-
-          // Preserve Original Luminance (L), blend A and B channels
-          double newL = originalLab[0];
-          
-          // Reduce recolor strength in extremely dark or bright regions to preserve highlights/shadows
-          double localStrength = strength;
-          if (newL < 15.0) localStrength *= (newL / 15.0); // fade out in dark shadows
-          if (newL > 90.0) localStrength *= ((100.0 - newL) / 10.0); // fade out in pure highlights
-
-          double newA = originalLab[1] * (1 - localStrength) + targetLab[1] * localStrength;
-          double newB = originalLab[2] * (1 - localStrength) + targetLab[2] * localStrength;
-
-          final newRgb = _labToRgb(newL, newA, newB);
-
-          // Alpha Mask Blending
-          final blendR = (p.r * (1 - maskAlpha) + newRgb[0] * maskAlpha).toInt().clamp(0, 255);
-          final blendG = (p.g * (1 - maskAlpha) + newRgb[1] * maskAlpha).toInt().clamp(0, 255);
-          final blendB = (p.b * (1 - maskAlpha) + newRgb[2] * maskAlpha).toInt().clamp(0, 255);
-
-          result.setPixelRgb(x, y, blendR, blendG, blendB);
+    if (!stroke.isEraser) {
+      applyColorToMask(alphaMask, stroke.color);
+    } else {
+      // Eraser logic would mean restoring the original pixel.
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          if (alphaMask[y * width + x] > 0.05) {
+            final p = image.getPixel(x, y);
+            result.setPixelRgb(x, y, p.r, p.g, p.b);
+          }
         }
       }
     }

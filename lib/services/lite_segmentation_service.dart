@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -28,44 +29,51 @@ class LiteSegmentationService implements AISegmentationService {
       if (_lastImagePath == imagePath && _lastImageEmbeddings != null) return;
 
       final imageBytes = await File(imagePath).readAsBytes();
-      final image = img.decodeImage(imageBytes);
-      if (image == null) return;
+      
+      final prepData = await Isolate.run(() {
+        final image = img.decodeImage(imageBytes);
+        if (image == null) return null;
 
-      _lastOrigW = image.width;
-      _lastOrigH = image.height;
+        final origW = image.width;
+        final origH = image.height;
+
+        int newW, newH;
+        if (origW > origH) {
+          newW = 1024;
+          newH = (1024.0 * origH / origW).round();
+        } else {
+          newH = 1024;
+          newW = (1024.0 * origW / origH).round();
+        }
+
+        final resized = img.copyResize(image, width: newW, height: newH);
+        final floatList = Float32List(1024 * 1024 * 3);
+        
+        int index = 0;
+        for (int y = 0; y < 1024; y++) {
+          for (int x = 0; x < 1024; x++) {
+            if (x < newW && y < newH) {
+              final pixel = resized.getPixel(x, y);
+              floatList[index++] = pixel.r.toDouble();
+              floatList[index++] = pixel.g.toDouble();
+              floatList[index++] = pixel.b.toDouble();
+            } else {
+              floatList[index++] = 0.0;
+              floatList[index++] = 0.0;
+              floatList[index++] = 0.0;
+            }
+          }
+        }
+        return [floatList, origW, origH];
+      });
+
+      if (prepData == null) return;
+      _lastOrigW = prepData[1] as int;
+      _lastOrigH = prepData[2] as int;
+      final floatList = prepData[0] as Float32List;
 
       final encoderSession = LiteModelManager().samEncoder;
       if (encoderSession == null) return;
-
-      // Calculate new dimensions maintaining aspect ratio (longest side 1024)
-      int newW, newH;
-      if (_lastOrigW > _lastOrigH) {
-        newW = 1024;
-        newH = (1024.0 * _lastOrigH / _lastOrigW).round();
-      } else {
-        newH = 1024;
-        newW = (1024.0 * _lastOrigW / _lastOrigH).round();
-      }
-
-      final resized = img.copyResize(image, width: newW, height: newH);
-      final floatList = Float32List(1024 * 1024 * 3);
-      
-      int index = 0;
-      for (int y = 0; y < 1024; y++) {
-        for (int x = 0; x < 1024; x++) {
-          if (x < newW && y < newH) {
-            final pixel = resized.getPixel(x, y);
-            // HWC layout for MobileSAM encoder
-            floatList[index++] = pixel.r.toDouble();
-            floatList[index++] = pixel.g.toDouble();
-            floatList[index++] = pixel.b.toDouble();
-          } else {
-            floatList[index++] = 0.0;
-            floatList[index++] = 0.0;
-            floatList[index++] = 0.0;
-          }
-        }
-      }
 
       final encoderInputTensor = OrtValueTensor.createTensorWithDataList(floatList, [1024, 1024, 3]);
       final encoderRunOptions = OrtRunOptions();
@@ -73,20 +81,24 @@ class LiteSegmentationService implements AISegmentationService {
       final encoderOutputs = encoderSession.run(encoderRunOptions, encoderInputs);
       
       final rawEmbeddings = encoderOutputs[0]?.value;
-      final flatEmbeddings = Float32List(1 * 256 * 64 * 64);
-      if (rawEmbeddings is List) {
-        int idx = 0;
-        void flatten(dynamic list) {
-          if (list is List) {
-            for (var e in list) flatten(e);
-          } else if (list is num) {
-            if (idx < flatEmbeddings.length) flatEmbeddings[idx++] = list.toDouble();
+      
+      final flatEmbeddings = await Isolate.run(() {
+        final flat = Float32List(1 * 256 * 64 * 64);
+        if (rawEmbeddings is List) {
+          int idx = 0;
+          void flatten(dynamic list) {
+            if (list is List) {
+              for (var e in list) flatten(e);
+            } else if (list is num) {
+              if (idx < flat.length) flat[idx++] = list.toDouble();
+            }
           }
+          flatten(rawEmbeddings);
+        } else if (rawEmbeddings is Float32List) {
+          flat.setAll(0, rawEmbeddings);
         }
-        flatten(rawEmbeddings);
-      } else if (rawEmbeddings is Float32List) {
-        flatEmbeddings.setAll(0, rawEmbeddings);
-      }
+        return flat;
+      });
       
       _lastImageEmbeddings = flatEmbeddings;
       _lastImagePath = imagePath;
@@ -157,37 +169,48 @@ class LiteSegmentationService implements AISegmentationService {
           });
           
           final rawMask = decoded[0]?.value;
-          final maskValues = Float32List(_lastOrigH * _lastOrigW);
-          if (rawMask is List) {
-            // Flatten nested lists
-            int idx = 0;
-            void flatten(dynamic list) {
-              if (list is List) {
-                for (var e in list) flatten(e);
-              } else if (list is num) {
-                if (idx < maskValues.length) maskValues[idx++] = list.toDouble();
+          final currentOrigW = _lastOrigW;
+          final currentOrigH = _lastOrigH;
+
+          final maskResult = await Isolate.run(() {
+            final maskValues = Float32List(currentOrigH * currentOrigW);
+            if (rawMask is List) {
+              int idx = 0;
+              void flatten(dynamic list) {
+                if (list is List) {
+                  for (var e in list) flatten(e);
+                } else if (list is num) {
+                  if (idx < maskValues.length) maskValues[idx++] = list.toDouble();
+                }
+              }
+              flatten(rawMask);
+            } else if (rawMask is Float32List) {
+              maskValues.setAll(0, rawMask);
+            }
+
+            int minX = currentOrigW, minY = currentOrigH, maxX = 0, maxY = 0;
+            final confMask = List<double>.filled(currentOrigW * currentOrigH, 0.0);
+
+            for (int y = 0; y < currentOrigH; y++) {
+              for (int x = 0; x < currentOrigW; x++) {
+                if (maskValues[y * currentOrigW + x] > 0.0) {
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                  if (y < minY) minY = y;
+                  if (y > maxY) maxY = y;
+                  
+                  confMask[y * currentOrigW + x] = 1.0;
+                }
               }
             }
-            flatten(rawMask);
-          } else if (rawMask is Float32List) {
-            maskValues.setAll(0, rawMask);
-          }
+            return [confMask, minX, minY, maxX, maxY];
+          });
 
-          int minX = _lastOrigW, minY = _lastOrigH, maxX = 0, maxY = 0;
-          final confMask = List<double>.filled(_lastOrigW * _lastOrigH, 0.0);
-
-          for (int y = 0; y < _lastOrigH; y++) {
-            for (int x = 0; x < _lastOrigW; x++) {
-              if (maskValues[y * _lastOrigW + x] > 0.0) {
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-                
-                confMask[y * _lastOrigW + x] = 1.0;
-              }
-            }
-          }
+          int minX = maskResult[1] as int;
+          int minY = maskResult[2] as int;
+          int maxX = maskResult[3] as int;
+          int maxY = maskResult[4] as int;
+          final confMask = maskResult[0] as List<double>;
 
           if (maxX > minX && maxY > minY) {
             int cropW = maxX - minX;
@@ -263,37 +286,48 @@ class LiteSegmentationService implements AISegmentationService {
       });
       
       final rawMask = decoded[0]?.value;
+      final currentOrigW = _lastOrigW;
+      final currentOrigH = _lastOrigH;
       
-      final maskValues = Float32List(_lastOrigH * _lastOrigW);
-      if (rawMask is List) {
-        int idx = 0;
-        void flatten(dynamic list) {
-          if (list is List) {
-            for (var e in list) flatten(e);
-          } else if (list is num) {
-            if (idx < maskValues.length) maskValues[idx++] = list.toDouble();
+      final maskResult = await Isolate.run(() {
+        final maskValues = Float32List(currentOrigH * currentOrigW);
+        if (rawMask is List) {
+          int idx = 0;
+          void flatten(dynamic list) {
+            if (list is List) {
+              for (var e in list) flatten(e);
+            } else if (list is num) {
+              if (idx < maskValues.length) maskValues[idx++] = list.toDouble();
+            }
+          }
+          flatten(rawMask);
+        } else if (rawMask is Float32List) {
+          maskValues.setAll(0, rawMask);
+        }
+
+        final confMask = List<double>.filled(currentOrigW * currentOrigH, 0.0);
+        int minX = currentOrigW, minY = currentOrigH, maxX = 0, maxY = 0;
+
+        for (int y = 0; y < currentOrigH; y++) {
+          for (int x = 0; x < currentOrigW; x++) {
+            if (maskValues[y * currentOrigW + x] > 0.0) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+
+              confMask[y * currentOrigW + x] = 1.0;
+            }
           }
         }
-        flatten(rawMask);
-      } else if (rawMask is Float32List) {
-        maskValues.setAll(0, rawMask);
-      }
+        return [confMask, minX, minY, maxX, maxY];
+      });
 
-      final confMask = List<double>.filled(_lastOrigW * _lastOrigH, 0.0);
-      int minX = _lastOrigW, minY = _lastOrigH, maxX = 0, maxY = 0;
-
-      for (int y = 0; y < _lastOrigH; y++) {
-        for (int x = 0; x < _lastOrigW; x++) {
-          if (maskValues[y * _lastOrigW + x] > 0.0) {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-
-            confMask[y * _lastOrigW + x] = 1.0;
-          }
-        }
-      }
+          int minX = maskResult[1] as int;
+          int minY = maskResult[2] as int;
+          int maxX = maskResult[3] as int;
+          int maxY = maskResult[4] as int;
+          final confMask = maskResult[0] as List<double>;
 
       pointCoordsTensor.release();
       pointLabelsTensor.release();
