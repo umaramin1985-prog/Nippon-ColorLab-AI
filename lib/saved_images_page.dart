@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -21,6 +22,14 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
   }
 
   Future<void> _loadImages() async {
+    if (kIsWeb) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+      return;
+    }
     try {
       final docDir = await getApplicationDocumentsDirectory();
       final savedDir = Directory('${docDir.path}/saved_images');
@@ -83,10 +92,10 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Color(0xFFC8102E)))
           : _images.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    'No saved images yet.',
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                    kIsWeb ? 'Saved projects are not supported on Web.' : 'No saved images yet.',
+                    style: const TextStyle(color: Colors.white70, fontSize: 16),
                   ),
                 )
               : GridView.builder(

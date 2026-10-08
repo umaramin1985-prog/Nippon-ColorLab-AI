@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -77,7 +79,7 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Future<void> _loadImage() async {
-    final bytes = await File(widget.imagePath).readAsBytes();
+    final bytes = await XFile(widget.imagePath).readAsBytes();
     final decoded = img.decodeImage(bytes);
 
     if (decoded != null) {
@@ -309,10 +311,8 @@ class _EditorPageState extends State<EditorPage> {
   Future<void> _shareImage() async {
     if (_editedBytes == null) return;
     try {
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/recolored_image.png');
-      await file.writeAsBytes(_editedBytes!);
-      await Share.shareXFiles([XFile(file.path)], text: 'Check out my new room color!');
+      final xFile = XFile.fromData(_editedBytes!, mimeType: 'image/png', name: 'recolored_image.png');
+      await Share.shareXFiles([xFile], text: 'Check out my new room color!');
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -325,6 +325,14 @@ class _EditorPageState extends State<EditorPage> {
   Future<void> _saveImage() async {
     if (_editedBytes == null) return;
     try {
+      if (kIsWeb) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please use the Share button to save/download on Web.')),
+          );
+        }
+        return;
+      }
       final docDir = await getApplicationDocumentsDirectory();
       final savedDir = Directory('${docDir.path}/saved_images');
       if (!await savedDir.exists()) {

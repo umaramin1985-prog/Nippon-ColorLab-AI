@@ -15,6 +15,7 @@ Nippon ColorLab AI is an advanced, AI-powered mobile application designed to rev
   - **Detailed Previews**: Tap any color to view a beautiful glassmorphic info sheet with Name, HEX, and RGB values (including instant Tap-to-Copy functionality).
   - **Share**: Export and share the entire Nippon Paint Colour Catalogue as a neatly formatted CSV file.
 - **Gallery & Workspace**: View all your modified and saved visualizations in the unified Saved Images gallery.
+- **Cross-Platform Support**: Enjoy a seamless experience across Web, Windows Desktop, Android, and iOS natively, featuring platform-aware fallback controls and logic for smooth operation everywhere.
 
 ## 🚀 Getting Started
 

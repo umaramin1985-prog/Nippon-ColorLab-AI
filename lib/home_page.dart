@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'editor_page.dart';
@@ -173,13 +174,15 @@ class _VisualizeTab extends StatelessWidget {
               label: 'Pick from Gallery',
               source: ImageSource.gallery,
             ),
-            const SizedBox(height: 16),
-            _buildActionBtn(
-              context,
-              icon: Icons.camera_alt,
-              label: 'Take a Photo',
-              source: ImageSource.camera,
-            ),
+            if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) ...[
+              const SizedBox(height: 16),
+              _buildActionBtn(
+                context,
+                icon: Icons.camera_alt,
+                label: 'Take a Photo',
+                source: ImageSource.camera,
+              ),
+            ],
           ],
         ),
       ),

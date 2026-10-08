@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-import 'package:onnxruntime/onnxruntime.dart';
+import 'onnxruntime_stub.dart' if (dart.library.io) 'package:onnxruntime/onnxruntime.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 class LiteModelManager {
