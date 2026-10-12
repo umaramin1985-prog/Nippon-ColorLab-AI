@@ -56,7 +56,7 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
         return Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E1E2C),
+            color: const Color(0xFF111111),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
             border: Border.all(color: Colors.white.withOpacity(0.1)),
           ),
@@ -212,7 +212,7 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
     }).toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0C10),
+      backgroundColor: const Color(0xFF000000),
       appBar: AppBar(
         title: const Text(
           'Colour Catalogue',
@@ -244,7 +244,7 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
           Container(
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF0B0C10), Color(0xFF1E1E2C)],
+                colors: [Color(0xFF000000), Color(0xFF0A0A0A)],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
@@ -352,7 +352,7 @@ class _BrowseColorsPageState extends State<BrowseColorsPage> {
           : () => _showColorDetails(fandeckColor),
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E2C),
+          color: const Color(0xFF111111),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.white.withOpacity(0.05)),
           boxShadow: [

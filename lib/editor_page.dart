@@ -251,7 +251,7 @@ class _EditorPageState extends State<EditorPage> {
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
+            color: const Color(0xFF111111),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             border: Border.all(color: Colors.white24),
           ),
@@ -416,7 +416,7 @@ class _EditorPageState extends State<EditorPage> {
         context: context,
         builder: (context) {
           return AlertDialog(
-            backgroundColor: const Color(0xFF1E1E1E),
+            backgroundColor: const Color(0xFF111111),
             title: const Text('Save Project', style: TextStyle(color: Colors.white)),
             content: TextField(
               controller: nameController,
@@ -783,7 +783,7 @@ class _EditorPageState extends State<EditorPage> {
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
+            color: const Color(0xFF111111),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             border: Border.all(color: Colors.white24),
           ),
@@ -990,7 +990,7 @@ class _EditorPageState extends State<EditorPage> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF000000),
       body: Stack(
         children: [
           Positioned.fill(

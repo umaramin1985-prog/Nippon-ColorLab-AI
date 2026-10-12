@@ -34,10 +34,10 @@ class RoomColorApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFFFF204E),
           secondary: Color(0xFFFF204E),
-          surface: Color(0xFF1E1E2C),
-          background: Color(0xFF0B0C10),
+          surface: Color(0xFF000000),
+          background: Color(0xFF000000),
         ),
-        scaffoldBackgroundColor: const Color(0xFF0B0C10),
+        scaffoldBackgroundColor: const Color(0xFF000000),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           elevation: 0,

@@ -91,7 +91,7 @@ class _LoginPageState extends State<LoginPage>
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
+          backgroundColor: const Color(0xFF111111),
           title: const Text('Developer Settings', style: TextStyle(color: Colors.white)),
           content: TextField(
             controller: tokenController,
@@ -136,7 +136,7 @@ class _LoginPageState extends State<LoginPage>
     return Scaffold(
       body: Stack(
         children: [
-          Container(color: const Color(0xFF0B0C10)),
+          Container(color: const Color(0xFF000000)),
           AnimatedBuilder(
             animation: _bgFloatController,
             builder: (context, child) {
@@ -164,7 +164,7 @@ class _LoginPageState extends State<LoginPage>
                       child: Container(
                         padding: const EdgeInsets.all(32.0),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1E1E2C).withOpacity(0.6),
+                          color: const Color(0xFF000000).withOpacity(0.6),
                           borderRadius: BorderRadius.circular(30),
                           border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
                           boxShadow: [

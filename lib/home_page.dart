@@ -37,7 +37,7 @@ class _HomePageState extends State<HomePage> {
             _currentIndex = index;
           });
         },
-        backgroundColor: const Color(0xFF0B0C10),
+        backgroundColor: const Color(0xFF000000),
         selectedItemColor: const Color(0xFFFF204E),
         unselectedItemColor: Colors.white38,
         type: BottomNavigationBarType.fixed,
@@ -127,7 +127,7 @@ class _VisualizeTab extends StatelessWidget {
         width: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF0B0C10), Color(0xFF1E1E2C)],
+            colors: [Color(0xFF000000), Color(0xFF0A0A0A)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -210,7 +210,7 @@ class _VisualizeTab extends StatelessWidget {
           ),
         ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF1E1E2C),
+          backgroundColor: const Color(0xFF111111),
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),

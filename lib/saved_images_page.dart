@@ -50,7 +50,7 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: const Color(0xFF111111),
         title: const Text('Delete Image', style: TextStyle(color: Colors.white)),
         content: const Text('Are you sure you want to delete this saved project?', style: TextStyle(color: Colors.white70)),
         actions: [
@@ -80,7 +80,7 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
     }).toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF000000),
       appBar: AppBar(
         title: const Text('Saved Projects', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)),
         backgroundColor: const Color(0xFFC8102E),
