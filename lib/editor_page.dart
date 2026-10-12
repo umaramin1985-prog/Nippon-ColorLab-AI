@@ -47,7 +47,7 @@ class _EditorPageState extends State<EditorPage> {
 
   bool _isLoading = true;
   bool _isProcessing = false;
-  bool _showSlider = true;
+  bool _showSlider = false;
 
   FandeckColor? _targetFandeckColor;
   Color get _targetColor => _targetFandeckColor?.color ?? Colors.white;
@@ -1289,7 +1289,7 @@ class _EditorPageState extends State<EditorPage> {
                                   children: [
                                     CircularProgressIndicator(color: Color(0xFFC8102E)),
                                     SizedBox(height: 16),
-                                    Text('Applying your changes...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    Text('Processing image...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                                   ],
                                 ),
                               ),
@@ -1309,44 +1309,56 @@ class _EditorPageState extends State<EditorPage> {
             top: MediaQuery.of(context).padding.top + 16,
             left: 16,
             right: 16,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  height: 48,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white24, width: 1),
+            child: Column(
+              children: [
+                const Text(
+                  'Photo Editor',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                        onPressed: () => Navigator.pop(context),
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white24, width: 1),
                       ),
-                      const SizedBox(width: 4),
-                      const Expanded(
-                        child: Text(
-                          'Photo Editor',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            padding: const EdgeInsets.all(4),
+                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                            onPressed: () => Navigator.pop(context),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
                       IconButton(
-                        icon: Icon(Icons.undo_rounded, size: 20, color: _editHistory.isNotEmpty ? Colors.white : Colors.white38),
+                        padding: const EdgeInsets.all(4),
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        icon: Icon(Icons.history, size: 20, color: _editHistory.isNotEmpty ? Colors.white : Colors.white38),
                         onPressed: _editHistory.isNotEmpty ? _undoLast : null,
                         tooltip: 'Undo',
                       ),
+                      IconButton(
+                        padding: const EdgeInsets.all(4),
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        icon: const Icon(Icons.auto_awesome, size: 20, color: Colors.white),
+                        onPressed: _showAIPromptDialog,
+                        tooltip: 'AI Magic',
+                      ),
                       if (_editedBytes != null) ...[
                         IconButton(
+                          padding: const EdgeInsets.all(4),
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                           icon: Icon(
                             _showSlider ? Icons.compare : Icons.compare_outlined,
                             size: 20,
@@ -1360,11 +1372,15 @@ class _EditorPageState extends State<EditorPage> {
                           tooltip: 'Compare Before/After',
                         ),
                         IconButton(
+                          padding: const EdgeInsets.all(4),
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                           icon: const Icon(Icons.save_alt, size: 20, color: Colors.white),
                           onPressed: _saveImage,
                           tooltip: 'Save',
                         ),
                         IconButton(
+                          padding: const EdgeInsets.all(4),
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                           icon: const Icon(Icons.share, size: 20, color: Colors.white),
                           onPressed: _shareImage,
                           tooltip: 'Share',
@@ -1375,101 +1391,54 @@ class _EditorPageState extends State<EditorPage> {
                 ),
               ),
             ),
-          ),
+          ],
+        ),
+      ),
 
-          // Bottom Editing Toolbar
+          // Floating Manual Color Picker
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 24,
-            left: 16,
             right: 16,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(30),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: Colors.white24, width: 1),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFFC8102E), Colors.deepOrange],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(26),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFFC8102E).withOpacity(0.4),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              )
-                            ],
-                          ),
-                          child: ElevatedButton.icon(
-                            onPressed: _showAIPromptDialog,
-                            icon: const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
-                            label: const Text('AI Magic', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.transparent,
-                              foregroundColor: Colors.white,
-                              shadowColor: Colors.transparent,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(26),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                        GestureDetector(
-                          onTap: _showColorPicker,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: GestureDetector(
+              onTap: _showColorPicker,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(26),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(26),
+                      border: Border.all(color: Colors.white24, width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_targetFandeckColor != null)
+                          Container(
+                            width: 16,
+                            height: 16,
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(26),
-                              border: Border.all(color: Colors.white12),
+                              color: _targetColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 1.5),
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_targetFandeckColor != null)
-                                  Container(
-                                    width: 16,
-                                    height: 16,
-                                    decoration: BoxDecoration(
-                                      color: _targetColor,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 1.5),
-                                    ),
-                                  )
-                                else
-                                  const Icon(Icons.palette_outlined, color: Colors.white, size: 16),
-                                const SizedBox(width: 8),
-                                ConstrainedBox(
-                                  constraints: const BoxConstraints(maxWidth: 70),
-                                  child: Text(
-                                    _targetFandeckColor?.name ?? 'Manual',
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.white,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                          )
+                        else
+                          const Icon(Icons.palette_outlined, color: Colors.white, size: 16),
+                        const SizedBox(width: 8),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 90),
+                          child: Text(
+                            _targetFandeckColor?.name ?? 'Manual',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -1478,6 +1447,7 @@ class _EditorPageState extends State<EditorPage> {
                 ),
               ),
             ),
+          ),
         ],
       ),
     );
