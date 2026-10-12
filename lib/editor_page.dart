@@ -47,6 +47,7 @@ class _EditorPageState extends State<EditorPage> {
 
   bool _isLoading = true;
   bool _isProcessing = false;
+  bool _showSlider = true;
 
   Color _targetColor = globalFandeckColors.isNotEmpty ? globalFandeckColors.first.color : Colors.white;
   double _tolerance = 0.1;
@@ -185,10 +186,22 @@ class _EditorPageState extends State<EditorPage> {
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
     if (pt == null) return;
 
+    setState(() {
+      _isProcessing = true;
+    });
+    
+    // Give UI a moment to show the loader
+    await Future.delayed(const Duration(milliseconds: 50));
+
     bool foundAISubject = false;
 
     AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
-    AIMask? mask = await service.segmentByPoint(imagePath: widget.imagePath, point: pt);
+    AIMask? mask;
+    try {
+      mask = await service.segmentByPoint(imagePath: widget.imagePath, point: pt);
+    } catch (e) {
+      debugPrint("Tap segmentation error: $e");
+    }
     
     if (mask == null && _currentAIMode == AIMode.pro) {
       // Fallback to lite for tap since pro might not support tap
@@ -200,6 +213,9 @@ class _EditorPageState extends State<EditorPage> {
     }
 
     if (mounted) {
+      setState(() {
+        _isProcessing = false;
+      });
       _suggestColors(pt, mask: mask);
     }
   }
@@ -214,10 +230,15 @@ class _EditorPageState extends State<EditorPage> {
 
     final sortedColors = List<FandeckColor>.from(globalFandeckColors);
     sortedColors.sort((c1, c2) {
-      final d1 =
-          math.pow(c1.r - r, 2) + math.pow(c1.g - g, 2) + math.pow(c1.b - b, 2);
-      final d2 =
-          math.pow(c2.r - r, 2) + math.pow(c2.g - g, 2) + math.pow(c2.b - b, 2);
+      final dr1 = c1.r - r;
+      final dg1 = c1.g - g;
+      final db1 = c1.b - b;
+      final d1 = dr1 * dr1 + dg1 * dg1 + db1 * db1;
+
+      final dr2 = c2.r - r;
+      final dg2 = c2.g - g;
+      final db2 = c2.b - b;
+      final d2 = dr2 * dr2 + dg2 * dg2 + db2 * db2;
       return d1.compareTo(d2);
     });
 
@@ -389,16 +410,63 @@ class _EditorPageState extends State<EditorPage> {
         }
         return;
       }
+      
+      final TextEditingController nameController = TextEditingController();
+      final String? fileName = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E1E),
+            title: const Text('Save Project', style: TextStyle(color: Colors.white)),
+            content: TextField(
+              controller: nameController,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Enter project name',
+                hintStyle: TextStyle(color: Colors.white54),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white38)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFC8102E))),
+              ),
+              autofocus: true,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
+                onPressed: () {
+                  final text = nameController.text.trim();
+                  Navigator.pop(context, text.isEmpty ? 'Project_${DateTime.now().millisecondsSinceEpoch}' : text);
+                },
+                child: const Text('Save', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (fileName == null) return; // User cancelled
+
       final docDir = await getApplicationDocumentsDirectory();
       final savedDir = Directory('${docDir.path}/saved_images');
       if (!await savedDir.exists()) {
         await savedDir.create(recursive: true);
       }
-      final file = File('${savedDir.path}/image_${DateTime.now().millisecondsSinceEpoch}.png');
+      
+      final safeName = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-\s]'), '_');
+      var file = File('${savedDir.path}/$safeName.png');
+      
+      // If file exists, append timestamp to avoid overwriting
+      if (await file.exists()) {
+         file = File('${savedDir.path}/${safeName}_${DateTime.now().millisecondsSinceEpoch}.png');
+      }
+
       await file.writeAsBytes(_editedBytes!);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Image saved successfully! Check the Saved tab.')),
+          const SnackBar(content: Text('Project saved successfully! Check the Saved tab.')),
         );
       }
     } catch (e) {
@@ -649,8 +717,15 @@ class _EditorPageState extends State<EditorPage> {
       }).toList();
 
       liteMatchedColors.sort((a, b) {
-        final d1 = math.pow(a.color.red - parsedCommand.targetColor.red, 2) + math.pow(a.color.green - parsedCommand.targetColor.green, 2) + math.pow(a.color.blue - parsedCommand.targetColor.blue, 2);
-        final d2 = math.pow(b.color.red - parsedCommand.targetColor.red, 2) + math.pow(b.color.green - parsedCommand.targetColor.green, 2) + math.pow(b.color.blue - parsedCommand.targetColor.blue, 2);
+        final dr1 = a.color.red - parsedCommand.targetColor.red;
+        final dg1 = a.color.green - parsedCommand.targetColor.green;
+        final db1 = a.color.blue - parsedCommand.targetColor.blue;
+        final d1 = dr1 * dr1 + dg1 * dg1 + db1 * db1;
+        
+        final dr2 = b.color.red - parsedCommand.targetColor.red;
+        final dg2 = b.color.green - parsedCommand.targetColor.green;
+        final db2 = b.color.blue - parsedCommand.targetColor.blue;
+        final d2 = dr2 * dr2 + dg2 * dg2 + db2 * db2;
         return d1.compareTo(d2);
       });
 
@@ -659,6 +734,8 @@ class _EditorPageState extends State<EditorPage> {
       setState(() {
         _isProcessing = true;
       });
+      
+      await Future.delayed(const Duration(milliseconds: 50));
 
       AIMask? mask;
       try {
@@ -916,9 +993,7 @@ class _EditorPageState extends State<EditorPage> {
       backgroundColor: const Color(0xFF121212),
       body: Stack(
         children: [
-          Column(
-        children: [
-          Expanded(
+          Positioned.fill(
             child: Container(
               color: Colors.black,
               child: LayoutBuilder(
@@ -942,7 +1017,7 @@ class _EditorPageState extends State<EditorPage> {
                                 fit: BoxFit.contain,
                               ),
                             ),
-                          if (_originalBytes != null)
+                          if (_originalBytes != null && _showSlider)
                             ClipRect(
                               child: Align(
                                 alignment: Alignment.centerLeft,
@@ -960,7 +1035,8 @@ class _EditorPageState extends State<EditorPage> {
                               ),
                             ),
 
-                          Positioned(
+                          if (_showSlider)
+                            Positioned(
                             left: constraints.maxWidth * _sliderPosition - 15,
                             top: 0,
                             bottom: 0,
@@ -997,7 +1073,8 @@ class _EditorPageState extends State<EditorPage> {
                               ),
                             ),
                           ),
-                          Positioned(
+                          if (_showSlider)
+                            Positioned(
                             left: constraints.maxWidth * _sliderPosition - 16,
                             top: constraints.maxHeight / 2 - 16,
                             child: IgnorePointer(
@@ -1044,99 +1121,86 @@ class _EditorPageState extends State<EditorPage> {
             ),
           ),
 
-          // Bottom Tool Bar
-          if (_tapEdits.isNotEmpty || _maskEdits.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E1E1E),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.5),
-                  blurRadius: 10,
-                  offset: const Offset(0, -5),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      // Selected Color Circle
-                      GestureDetector(
-                        onTap: _showColorPicker,
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: _targetColor,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 4,
+
+          // Bottom Tool Bar (Floating Glassmorphism)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+            bottom: (_tapEdits.isNotEmpty || _maskEdits.isNotEmpty) 
+                ? MediaQuery.of(context).padding.bottom + 24 
+                : -100,
+            left: 20,
+            right: 20,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: (_tapEdits.isNotEmpty || _maskEdits.isNotEmpty) ? 1.0 : 0.0,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white24, width: 1.5),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.undo_rounded, color: _editHistory.isNotEmpty ? Colors.white : Colors.white38),
+                          onPressed: _editHistory.isNotEmpty ? _undoLast : null,
+                          tooltip: 'Undo',
+                        ),
+                        GestureDetector(
+                          onTap: _showColorPicker,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: _targetColor,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 1.5),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.3),
+                                        blurRadius: 4,
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Text(
+                                  'Change Colour',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Colour',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 24),
-                      // Tolerance Slider
-                      const Text(
-                        'Tolerance:',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _tolerance,
-                          min: 0.01,
-                          max: 1.0,
-                          activeColor: const Color(0xFFC8102E),
-                          onChanged: (value) {
-                            setState(() {
-                              _tolerance = value;
-                              _updateLastEditTolerance(value);
-                            });
-                          },
-                          onChangeEnd: (value) {
-                            _processImage();
-                          },
-                        ),
-                      ),
-                      Text(
-                        '${(_tolerance * 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ],
-      ),
       Positioned(
         top: MediaQuery.of(context).padding.top + 16,
         left: 16,
@@ -1196,9 +1260,17 @@ class _EditorPageState extends State<EditorPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: Icon(Icons.undo, size: 22, color: _editHistory.isNotEmpty ? Colors.white : Colors.white38),
-                        onPressed: _editHistory.isNotEmpty ? _undoLast : null,
-                        tooltip: 'Undo',
+                        icon: Icon(
+                          _showSlider ? Icons.compare : Icons.compare_outlined,
+                          size: 22,
+                          color: Colors.white,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _showSlider = !_showSlider;
+                          });
+                        },
+                        tooltip: 'Toggle Before/After',
                       ),
                       if (_editedBytes != null) ...[
                         IconButton(

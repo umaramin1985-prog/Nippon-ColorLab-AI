@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'home_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -11,7 +12,7 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -21,6 +22,7 @@ class _LoginPageState extends State<LoginPage>
   late Animation<Offset> _formSlideAnimation;
   late Animation<double> _formFadeAnimation;
   
+  late AnimationController _bgFloatController;
 
   @override
   void initState() {
@@ -29,6 +31,11 @@ class _LoginPageState extends State<LoginPage>
       vsync: this,
       duration: const Duration(milliseconds: 2500),
     );
+
+    _bgFloatController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat();
 
     _bgFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animController, curve: const Interval(0.0, 0.5, curve: Curves.easeIn)),
@@ -51,6 +58,7 @@ class _LoginPageState extends State<LoginPage>
 
   @override
   void dispose() {
+    _bgFloatController.dispose();
     _animController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
@@ -129,32 +137,18 @@ class _LoginPageState extends State<LoginPage>
       body: Stack(
         children: [
           Container(color: const Color(0xFF0B0C10)),
-          Positioned(
-            top: -100,
-            left: -50,
-            child: Container(
-              width: 300,
-              height: 300,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFFFF204E).withOpacity(0.3),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: -50,
-            right: -100,
-            child: Container(
-              width: 250,
-              height: 250,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFFC8102E).withOpacity(0.2),
-              ),
-            ),
+          AnimatedBuilder(
+            animation: _bgFloatController,
+            builder: (context, child) {
+              return SizedBox.expand(
+                child: CustomPaint(
+                  painter: PaintStrokePainter(_bgFloatController.value),
+                ),
+              );
+            },
           ),
           BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+            filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
             child: Container(color: Colors.transparent),
           ),
           SafeArea(
@@ -322,5 +316,77 @@ class _LoginPageState extends State<LoginPage>
           ],
         ),
     );
+  }
+}
+
+class PaintStrokePainter extends CustomPainter {
+  final double progress;
+  PaintStrokePainter(this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width == 0 || size.height == 0) return;
+
+    final paint1 = Paint()
+      ..shader = ui.Gradient.linear(
+        const Offset(0, 0),
+        Offset(size.width, size.height),
+        [const Color(0xFFFF204E).withOpacity(0.6), const Color(0xFFC8102E).withOpacity(0.8)],
+      )
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 120.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final path1 = Path();
+    path1.moveTo(size.width * -0.1, size.height * 0.2);
+    path1.quadraticBezierTo(size.width * 0.8, size.height * 0.1, size.width * 0.5, size.height * 0.5);
+    path1.quadraticBezierTo(size.width * 0.1, size.height * 0.8, size.width * 1.1, size.height * 0.9);
+
+    final metrics1 = path1.computeMetrics().toList();
+    if (metrics1.isNotEmpty) {
+      final m = metrics1.first;
+      
+      // Calculate a continuous sweeping wave (0 -> 1 -> 0)
+      double wave = (math.sin(progress * 2 * math.pi - math.pi / 2) + 1) / 2; 
+      
+      final extract1 = m.extractPath(0.0, m.length * wave);
+      canvas.drawPath(extract1, paint1);
+
+      // Draw the Brush Icon at the leading edge
+      final tangent = m.getTangentForOffset(m.length * wave);
+      if (tangent != null) {
+        final icon = Icons.brush;
+        TextPainter textPainter = TextPainter(textDirection: TextDirection.ltr);
+        textPainter.text = TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+            fontSize: 70.0,
+            fontFamily: icon.fontFamily,
+            package: icon.fontPackage,
+            color: Colors.white.withOpacity(0.8),
+            shadows: [
+              Shadow(color: Colors.black.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 5)),
+            ],
+          ),
+        );
+        textPainter.layout();
+        
+        canvas.save();
+        canvas.translate(tangent.position.dx, tangent.position.dy);
+        
+        // Rotate the brush slightly to match the stroke direction
+        final angle = math.atan2(tangent.vector.dy, tangent.vector.dx);
+        canvas.rotate(angle + math.pi / 4); // offset so brush points forward
+        
+        textPainter.paint(canvas, Offset(-textPainter.width / 2, -textPainter.height));
+        canvas.restore();
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant PaintStrokePainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'editor_page.dart';
 
 class SavedImagesPage extends StatefulWidget {
   const SavedImagesPage({super.key});
@@ -13,6 +14,7 @@ class SavedImagesPage extends StatefulWidget {
 
 class _SavedImagesPageState extends State<SavedImagesPage> {
   List<File> _images = [];
+  String _searchQuery = '';
   bool _isLoading = true;
 
   @override
@@ -23,11 +25,7 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
 
   Future<void> _loadImages() async {
     if (kIsWeb) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
     try {
@@ -41,14 +39,10 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
           _isLoading = false;
         });
       } else {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
       }
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 
@@ -58,7 +52,7 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
         title: const Text('Delete Image', style: TextStyle(color: Colors.white)),
-        content: const Text('Are you sure you want to delete this saved image?', style: TextStyle(color: Colors.white70)),
+        content: const Text('Are you sure you want to delete this saved project?', style: TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -68,9 +62,7 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
             onPressed: () {
               file.deleteSync();
-              setState(() {
-                _images.remove(file);
-              });
+              setState(() => _images.remove(file));
               Navigator.pop(context);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
@@ -82,6 +74,11 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredImages = _images.where((f) {
+      final name = f.path.split(Platform.pathSeparator).last.toLowerCase();
+      return name.contains(_searchQuery.toLowerCase());
+    }).toList();
+
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
@@ -89,83 +86,140 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
         backgroundColor: const Color(0xFFC8102E),
         elevation: 0,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFFC8102E)))
-          : _images.isEmpty
-              ? Center(
-                  child: Text(
-                    kIsWeb ? 'Saved projects are not supported on Web.' : 'No saved images yet.',
-                    style: const TextStyle(color: Colors.white70, fontSize: 16),
+      body: Column(
+        children: [
+          if (!_isLoading && !kIsWeb && _images.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Search projects...',
+                  hintStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
                   ),
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 0.8,
-                  ),
-                  itemCount: _images.length,
-                  itemBuilder: (context, index) {
-                    final file = _images[index];
-                    return Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.file(file, fit: BoxFit.cover),
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Row(
-                                children: [
-                                  GestureDetector(
-                                    onTap: () {
-                                      Share.shareXFiles([XFile(file.path)], text: 'Check out my new room color!');
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.all(6),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.6),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.share, size: 18, color: Colors.white),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
-                                    onTap: () => _deleteImage(file),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(6),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.6),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.delete, size: 18, color: Colors.white),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
                 ),
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val;
+                  });
+                },
+              ),
+            ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFFC8102E)))
+                : _images.isEmpty
+                    ? Center(
+                        child: Text(
+                          kIsWeb ? 'Saved projects are not supported on Web.' : 'No saved projects yet.',
+                          style: const TextStyle(color: Colors.white70, fontSize: 16),
+                        ),
+                      )
+                    : filteredImages.isEmpty
+                        ? const Center(
+                            child: Text('No projects match your search.', style: TextStyle(color: Colors.white70)),
+                          )
+                        : GridView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                              childAspectRatio: 0.65,
+                            ),
+                            itemCount: filteredImages.length,
+                            itemBuilder: (context, index) {
+                              final file = filteredImages[index];
+                              final fileName = file.path.split(Platform.pathSeparator).last.replaceAll('.png', '');
+                              final date = file.lastModifiedSync();
+                              final dateStr = '${date.day}/${date.month}/${date.year}';
+
+                              return GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (context) => EditorPage(imagePath: file.path)),
+                                  );
+                                },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.05),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.white12),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: ClipRRect(
+                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                          child: Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              Image.file(file, fit: BoxFit.cover),
+                                              Positioned(
+                                                top: 4,
+                                                right: 4,
+                                                child: Row(
+                                                  children: [
+                                                    GestureDetector(
+                                                      onTap: () => Share.shareXFiles([XFile(file.path)], text: 'Check out my new room color!'),
+                                                      child: Container(
+                                                        padding: const EdgeInsets.all(4),
+                                                        decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), shape: BoxShape.circle),
+                                                        child: const Icon(Icons.share, size: 14, color: Colors.white),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    GestureDetector(
+                                                      onTap: () => _deleteImage(file),
+                                                      child: Container(
+                                                        padding: const EdgeInsets.all(4),
+                                                        decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), shape: BoxShape.circle),
+                                                        child: const Icon(Icons.delete, size: 14, color: Colors.white),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              fileName,
+                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              dateStr,
+                                              style: const TextStyle(color: Colors.white54, fontSize: 10),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -78,7 +78,8 @@ class LiteSegmentationService implements AISegmentationService {
       final encoderInputTensor = OrtValueTensor.createTensorWithDataList(floatList, [1024, 1024, 3]);
       final encoderRunOptions = OrtRunOptions();
       final encoderInputs = {encoderSession.inputNames[0]: encoderInputTensor};
-      final encoderOutputs = encoderSession.run(encoderRunOptions, encoderInputs);
+      final encoderOutputs = await encoderSession.runAsync(encoderRunOptions, encoderInputs);
+      if (encoderOutputs == null) return;
       
       final rawEmbeddings = encoderOutputs[0]?.value;
       
@@ -127,9 +128,9 @@ class LiteSegmentationService implements AISegmentationService {
       if (decoderSession == null) return null;
 
       await _matcher.initialize();
-      final textEmbedding = _matcher.getTextEmbedding(object);
+      final textEmbedding = await _matcher.getTextEmbedding(object);
       final imageBytes = await File(imagePath).readAsBytes();
-      final image = img.decodeImage(imageBytes);
+      final image = await Isolate.run(() => img.decodeImage(imageBytes));
       if (image == null) return null;
 
       double bestSimilarity = -1.0;
@@ -159,7 +160,7 @@ class LiteSegmentationService implements AISegmentationService {
           final origImSizeTensor = OrtValueTensor.createTensorWithDataList(origImSize, [2]);
 
           final decoderRunOptions = OrtRunOptions();
-          final decoded = decoderSession.run(decoderRunOptions, {
+          final decoded = await decoderSession.runAsync(decoderRunOptions, {
             'image_embeddings': imageEmbeddingsTensor,
             'point_coords': pointCoordsTensor,
             'point_labels': pointLabelsTensor,
@@ -167,6 +168,7 @@ class LiteSegmentationService implements AISegmentationService {
             'has_mask_input': hasMaskInputTensor,
             'orig_im_size': origImSizeTensor,
           });
+          if (decoded == null) continue;
           
           final rawMask = decoded[0]?.value;
           final currentOrigW = _lastOrigW;
@@ -217,8 +219,8 @@ class LiteSegmentationService implements AISegmentationService {
             int cropH = maxY - minY;
             
             if (cropW > 0 && cropH > 0) {
-              img.Image candidateCrop = img.copyCrop(image, x: minX, y: minY, width: cropW, height: cropH);
-              final candidateEmbed = _matcher.getImageEmbedding(candidateCrop);
+              img.Image candidateCrop = await Isolate.run(() => img.copyCrop(image, x: minX, y: minY, width: cropW, height: cropH));
+              final candidateEmbed = await _matcher.getImageEmbedding(candidateCrop);
               double similarity = _matcher.calculateSimilarity(textEmbedding, candidateEmbed);
               
               // MobileCLIP prefers tight crops of plain textures, which penalizes large objects like walls that include other items in their bounding box.
@@ -276,7 +278,7 @@ class LiteSegmentationService implements AISegmentationService {
       final origImSizeTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList([_lastOrigH.toDouble(), _lastOrigW.toDouble()]), [2]);
 
       final decoderRunOptions = OrtRunOptions();
-      final decoded = decoderSession.run(decoderRunOptions, {
+      final decoded = await decoderSession.runAsync(decoderRunOptions, {
         'image_embeddings': imageEmbeddingsTensor,
         'point_coords': pointCoordsTensor,
         'point_labels': pointLabelsTensor,
@@ -284,6 +286,7 @@ class LiteSegmentationService implements AISegmentationService {
         'has_mask_input': hasMaskInputTensor,
         'orig_im_size': origImSizeTensor,
       });
+      if (decoded == null) return null;
       
       final rawMask = decoded[0]?.value;
       final currentOrigW = _lastOrigW;

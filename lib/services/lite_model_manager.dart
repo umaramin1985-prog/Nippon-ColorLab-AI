@@ -19,22 +19,29 @@ class LiteModelManager {
     if (isInitialized) return;
 
     try {
+      // Let the page transition animation finish smoothly before heavily blocking the UI thread
+      await Future.delayed(const Duration(milliseconds: 400));
+      
       OrtEnv.instance.init();
 
       final encoderOptions = OrtSessionOptions();
       final encoderBytes = await rootBundle.load('assets/models/mobilesam/mobile_sam_image_encoder.onnx');
+      await Future.delayed(const Duration(milliseconds: 10)); // Yield to event loop
       samEncoder = OrtSession.fromBuffer(encoderBytes.buffer.asUint8List(), encoderOptions);
 
       final decoderOptions = OrtSessionOptions();
       final decoderBytes = await rootBundle.load('assets/models/mobilesam/sam_mask_decoder_single.onnx');
+      await Future.delayed(const Duration(milliseconds: 10)); // Yield
       samDecoder = OrtSession.fromBuffer(decoderBytes.buffer.asUint8List(), decoderOptions);
 
       final visionOptions = OrtSessionOptions();
       final visionBytes = await rootBundle.load('assets/models/mobileclip/onnx/vision_model.onnx');
+      await Future.delayed(const Duration(milliseconds: 10)); // Yield
       clipVision = OrtSession.fromBuffer(visionBytes.buffer.asUint8List(), visionOptions);
 
       final textOptions = OrtSessionOptions();
       final textBytes = await rootBundle.load('assets/models/mobileclip/onnx/text_model.onnx');
+      await Future.delayed(const Duration(milliseconds: 10)); // Yield
       clipText = OrtSession.fromBuffer(textBytes.buffer.asUint8List(), textOptions);
 
       isInitialized = true;
