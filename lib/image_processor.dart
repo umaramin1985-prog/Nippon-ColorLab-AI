@@ -79,23 +79,40 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
         final maskAlpha = alphaMask[y * width + x];
         if (maskAlpha <= 0.05) continue;
         
+        final p = image.getPixel(x, y); 
+
+        // SKY PROTECTION: Never allow the sky to change color
+        if (y < height * 0.65) {
+          final isBlueSky = p.b > 115 && p.b > p.r + 20 && p.b >= p.g - 5 && (p.r + p.g + p.b) > 280;
+          final isOvercastSky = y < height * 0.45 && p.r > 220 && p.g > 220 && p.b > 220 &&
+              (p.r - p.g).abs() < 12 && (p.g - p.b).abs() < 12 && (p.r - p.b).abs() < 12;
+          if (isBlueSky || isOvercastSky) continue;
+        }
+        
         final effectiveAlpha = maskAlpha;
         
         if (showMaskOverlay) {
           result.setPixelRgb(x, y, 0, (255 * effectiveAlpha).toInt(), 0);
         } else {
-          final p = image.getPixel(x, y); 
           final currentP = result.getPixel(x, y); 
           
           final originalLab = _rgbToLab(p.r, p.g, p.b);
-          double newL = originalLab[0];
-          
-          double localStrength = strength;
-          if (newL < 15.0) localStrength *= (newL / 15.0); 
-          if (newL > 90.0) localStrength *= ((100.0 - newL) / 10.0);
+          final oL = originalLab[0];
 
-          double newA = originalLab[1] * (1 - localStrength) + targetLab[1] * localStrength;
-          double newB = originalLab[2] * (1 - localStrength) + targetLab[2] * localStrength;
+          // Realistic architectural paint lighting modulation:
+          // Accurately renders the target Nippon Paint lightness and color,
+          // while preserving shadows, lighting gradients, and subtle wall texture.
+          double lumModulation = (oL - 75.0) * 0.45;
+          double newL = (targetLab[0] + lumModulation).clamp(8.0, 96.0);
+
+          // Deep shadow protection: keep deep shadows (dark cracks, switch recesses) naturally dark
+          if (oL < 20.0) newL = math.min(newL, oL);
+          // Highlight protection: preserve specular sheen / light reflections
+          if (oL > 95.0) newL = math.max(newL, oL);
+
+          // Rich pigment coverage for target color
+          double newA = targetLab[1] * strength + originalLab[1] * (1.0 - strength);
+          double newB = targetLab[2] * strength + originalLab[2] * (1.0 - strength);
 
           final newRgb = _labToRgb(newL, newA, newB);
 
@@ -128,58 +145,98 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
     applyColorToMask(alphaMask, maskEdit.color);
   }
 
-  // Process TapEdits
-  for (final tapEdit in tapEdits) {
-    final alphaMask = List<double>.filled(width * height, 0.0);
-    final visited = List<bool>.filled(width * height, false);
-    final queue = <int>[];
-    
-    final tap = tapEdit.point;
-    if (tap.x < 0 || tap.x >= width || tap.y < 0 || tap.y >= height) continue;
-    
-    final p = image.getPixel(tap.x, tap.y);
-    final startColor = [p.r, p.g, p.b];
-    queue.add(tap.y * width + tap.x);
-    visited[tap.y * width + tap.x] = true;
-
-    final tolSq = tapEdit.tolerance * tapEdit.tolerance * 255 * 255 * 3;
-    final edgeTolSq = (tapEdit.tolerance * 1.5) * (tapEdit.tolerance * 1.5) * 255 * 255 * 3;
-
-    while (queue.isNotEmpty) {
-      final idx = queue.removeLast();
-      final x = idx % width;
-      final y = idx ~/ width;
-      
-      final cp = image.getPixel(x, y);
-
-      final dr = cp.r - startColor[0];
-      final dg = cp.g - startColor[1];
-      final db = cp.b - startColor[2];
-      
-      if ((dr * dr + dg * dg + db * db) <= tolSq) {
-        alphaMask[y * width + x] = 1.0;
-
-        void tryAdd(int nx, int ny) {
-          final nidx = ny * width + nx;
-          if (!visited[nidx]) {
-            final np = image.getPixel(nx, ny);
-            final ndr = cp.r - np.r;
-            final ndg = cp.g - np.g;
-            final ndb = cp.b - np.b;
-            if ((ndr * ndr + ndg * ndg + ndb * ndb) <= edgeTolSq) {
-              queue.add(nidx);
-              visited[nidx] = true;
-            }
-          }
-        }
-
-        if (x > 0) tryAdd(x - 1, y);
-        if (x < width - 1) tryAdd(x + 1, y);
-        if (y > 0) tryAdd(x, y - 1);
-        if (y < height - 1) tryAdd(x, y + 1);
+  // Process TapEdits with Edge-Aware Boundary Protection (Stops at ceiling seams/moldings)
+  if (tapEdits.isNotEmpty) {
+    final lum = Uint8List(width * height);
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final p = image.getPixel(x, y);
+        lum[y * width + x] = ((p.r * 299 + p.g * 587 + p.b * 114) ~/ 1000).clamp(0, 255);
       }
     }
-    applyColorToMask(alphaMask, tapEdit.color);
+
+    for (final tapEdit in tapEdits) {
+      final alphaMask = List<double>.filled(width * height, 0.0);
+      final visited = List<bool>.filled(width * height, false);
+      final queue = <int>[];
+      
+      final tap = tapEdit.point;
+      if (tap.x < 0 || tap.x >= width || tap.y < 0 || tap.y >= height) continue;
+      
+      final p = image.getPixel(tap.x, tap.y);
+      final startColor = [p.r, p.g, p.b];
+      queue.add(tap.y * width + tap.x);
+      visited[tap.y * width + tap.x] = true;
+
+      final tolSq = tapEdit.tolerance * tapEdit.tolerance * 255 * 255 * 3;
+      final maxStepSq = math.min(tapEdit.tolerance * tapEdit.tolerance * 255 * 255 * 3 * 0.4, 550.0);
+
+      while (queue.isNotEmpty) {
+        final idx = queue.removeLast();
+        final x = idx % width;
+        final y = idx ~/ width;
+        
+        final cp = image.getPixel(x, y);
+
+        final dr = cp.r - startColor[0];
+        final dg = cp.g - startColor[1];
+        final db = cp.b - startColor[2];
+        final distFromStartSq = dr * dr + dg * dg + db * db;
+        
+        if (distFromStartSq <= tolSq) {
+          final ratio = distFromStartSq / tolSq;
+          alphaMask[y * width + x] = ratio > 0.85 ? ((1.0 - ratio) / 0.15).clamp(0.2, 1.0) : 1.0;
+
+          final cLum = lum[idx];
+
+          void tryAdd(int nx, int ny) {
+            final nidx = ny * width + nx;
+            if (!visited[nidx]) {
+              final nLum = lum[nidx];
+              final lumDiff = (cLum - nLum).abs();
+              // Prevent jumping across ceiling crease, shadow line, or molding
+              if (lumDiff > 20) return;
+
+              // Local gradient edge magnitude
+              int grad = 0;
+              if (nx > 0 && nx < width - 1) {
+                grad += (lum[ny * width + nx + 1] - lum[ny * width + nx - 1]).abs();
+              }
+              if (ny > 0 && ny < height - 1) {
+                grad += (lum[(ny + 1) * width + nx] - lum[(ny - 1) * width + nx]).abs();
+              }
+              if (grad > 38) return; // Structural boundary
+
+              final np = image.getPixel(nx, ny);
+
+              // Sky protection: flood-fill should never cross into sky
+              if (ny < height * 0.65) {
+                final isBlueSky = np.b > 115 && np.b > np.r + 20 && np.b >= np.g - 5 && (np.r + np.g + np.b) > 280;
+                final isOvercastSky = ny < height * 0.45 && np.r > 220 && np.g > 220 && np.b > 220 &&
+                    (np.r - np.g).abs() < 12 && (np.g - np.b).abs() < 12 && (np.r - np.b).abs() < 12;
+                if (isBlueSky || isOvercastSky) return;
+              }
+
+              final ndr = cp.r - np.r;
+              final ndg = cp.g - np.g;
+              final ndb = cp.b - np.b;
+              final stepSq = ndr * ndr + ndg * ndg + ndb * ndb;
+
+              if (stepSq <= maxStepSq) {
+                queue.add(nidx);
+                visited[nidx] = true;
+              }
+            }
+          }
+
+          if (x > 0) tryAdd(x - 1, y);
+          if (x < width - 1) tryAdd(x + 1, y);
+          if (y > 0) tryAdd(x, y - 1);
+          if (y < height - 1) tryAdd(x, y + 1);
+        }
+      }
+      applyColorToMask(alphaMask, tapEdit.color);
+    }
   }
 
   // Process ManualStrokes

@@ -183,9 +183,38 @@ class _EditorPageState extends State<EditorPage> {
     return math.Point(x, y);
   }
 
+  bool _isSkyPoint(math.Point<int> pt) {
+    if (_originalImage == null) return false;
+    final h = _originalImage!.height;
+    if (pt.y > h * 0.65) return false;
+
+    final p = _originalImage!.getPixel(pt.x, pt.y);
+    final r = p.r;
+    final g = p.g;
+    final b = p.b;
+
+    final isBlueSky = b > 115 && b > r + 20 && b >= g - 5 && (r + g + b) > 280;
+    final isOvercastSky = pt.y < h * 0.45 && r > 220 && g > 220 && b > 220 &&
+        (r - g).abs() < 12 && (g - b).abs() < 12 && (r - b).abs() < 12;
+
+    return isBlueSky || isOvercastSky;
+  }
+
   Future<void> _onImageTapped(TapUpDetails details, BoxConstraints constraints) async {
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
     if (pt == null) return;
+
+    if (_isSkyPoint(pt)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sky cannot be painted. Please tap on walls, ceilings, doors, or furniture.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
 
     setState(() {
       _isProcessing = true;
@@ -229,6 +258,9 @@ class _EditorPageState extends State<EditorPage> {
     final g = pixel.g;
     final b = pixel.b;
 
+    final isCeiling = pt.y < (_originalImage!.height * 0.22);
+    final surfaceTitle = isCeiling ? 'Ceiling' : 'Wall';
+
     final sortedColors = List<FandeckColor>.from(globalFandeckColors);
     sortedColors.sort((c1, c2) {
       final dr1 = c1.r - r;
@@ -243,7 +275,22 @@ class _EditorPageState extends State<EditorPage> {
       return d1.compareTo(d2);
     });
 
-    final top5 = sortedColors.take(5).toList();
+    final suggested = <FandeckColor>[];
+    if (_targetFandeckColor != null) {
+      suggested.add(_targetFandeckColor!);
+    }
+    for (var c in sortedColors) {
+      if (!suggested.any((s) => s.name == c.name)) {
+        suggested.add(c);
+      }
+      if (suggested.length >= 4) break;
+    }
+    for (var c in globalFandeckColors) {
+      if (!suggested.any((s) => s.name == c.name)) {
+        suggested.add(c);
+      }
+      if (suggested.length >= 8) break;
+    }
 
     showModalBottomSheet(
       context: context,
@@ -259,9 +306,9 @@ class _EditorPageState extends State<EditorPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Select a Color',
-                style: TextStyle(
+              Text(
+                'Paint $surfaceTitle with Nippon Paint',
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -271,7 +318,7 @@ class _EditorPageState extends State<EditorPage> {
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
-                children: top5
+                children: suggested
                     .map(
                       (c) => GestureDetector(
                         onTap: () {
@@ -652,6 +699,13 @@ class _EditorPageState extends State<EditorPage> {
 
     // In Pro Mode, we use FLUX to directly edit the image!
     if (_currentAIMode == AIMode.pro) {
+      if (lowerPrompt.contains('sky') || lowerPrompt.contains('cloud')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sky cannot be painted. Please choose an architectural surface like walls, ceilings, doors, or furniture.')),
+        );
+        return;
+      }
+
       if (foundColorStr == null || matchedColors.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please include a color (e.g., red, blue) in your prompt for Pro Mode.')),
@@ -704,6 +758,13 @@ class _EditorPageState extends State<EditorPage> {
     if (parsedCommands.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not understand the color or object from your prompt.')),
+      );
+      return;
+    }
+
+    if (parsedCommands.any((cmd) => cmd.objectName == 'sky')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sky cannot be painted. Please choose an architectural surface like walls, ceilings, doors, or furniture.')),
       );
       return;
     }

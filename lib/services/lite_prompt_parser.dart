@@ -28,10 +28,27 @@ class LitePromptParser {
     'teal': Colors.teal,
   };
 
-  // Common verbs to ignore
+  // Common verbs and filler words to ignore
   static final List<String> _ignoreWords = [
-    'make', 'change', 'turn', 'recolor', 'paint', 'the', 'to', 'into', 'a', 'an'
+    'make', 'change', 'turn', 'recolor', 'paint', 'painting', 'the', 'to', 'into', 
+    'a', 'an', 'color', 'colour', 'colors', 'colours', 'shade', 'please', 'room', 
+    'in', 'with', 'of', 'my', 'our', 'this'
   ];
+
+  static String _normalizeObjectName(String raw) {
+    var text = raw.toLowerCase().trim();
+    if (text.contains('sky') || text.contains('cloud')) return 'sky';
+    if (text.contains('ceiling') || text.contains('roof')) return 'ceiling';
+    if (text.contains('wall')) return 'wall';
+    if (text.contains('floor') || text.contains('ground')) return 'floor';
+    if (text.contains('sofa') || text.contains('couch')) return 'sofa';
+    if (text.contains('door')) return 'door';
+    if (text.contains('window')) return 'window';
+    if (text.endsWith('s') && text.length > 3) {
+      text = text.substring(0, text.length - 1);
+    }
+    return text.isEmpty ? 'wall' : text;
+  }
 
   static List<ImageEditCommand> parse(String prompt) {
     final lowerPrompt = prompt.toLowerCase();
@@ -57,18 +74,15 @@ class LitePromptParser {
       }
 
       if (foundColorName != null && foundColor != null) {
-        String remainingText = chunk.replaceAll(foundColorName, '').trim();
+        String remainingText = chunk.replaceAll(foundColorName, ' ').trim();
         for (var word in _ignoreWords) {
-          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), '').trim();
+          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), ' ').trim();
         }
 
         remainingText = remainingText.replaceAll(RegExp(r'\s+'), ' ').trim();
+        final normalized = _normalizeObjectName(remainingText);
 
-        if (remainingText.isEmpty) {
-          remainingText = 'wall'; // Fallback
-        }
-
-        commands.add(ImageEditCommand(remainingText, foundColor));
+        commands.add(ImageEditCommand(normalized, foundColor));
       }
     }
     
@@ -86,15 +100,13 @@ class LitePromptParser {
       }
       
       if (foundColorName != null && foundColor != null) {
-        String remainingText = lowerPrompt.replaceAll(foundColorName, '').trim();
+        String remainingText = lowerPrompt.replaceAll(foundColorName, ' ').trim();
         for (var word in _ignoreWords) {
-          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), '').trim();
+          remainingText = remainingText.replaceAll(RegExp(r'\b' + word + r'\b'), ' ').trim();
         }
         remainingText = remainingText.replaceAll(RegExp(r'\s+'), ' ').trim();
-        if (remainingText.isEmpty) {
-          remainingText = 'wall';
-        }
-        commands.add(ImageEditCommand(remainingText, foundColor));
+        final normalized = _normalizeObjectName(remainingText);
+        commands.add(ImageEditCommand(normalized, foundColor));
       }
     }
 
