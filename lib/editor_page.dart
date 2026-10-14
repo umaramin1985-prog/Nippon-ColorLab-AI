@@ -68,6 +68,8 @@ class _EditorPageState extends State<EditorPage> {
 
   bool _isLoading = true;
   bool _isProcessing = false;
+  double _processProgress = 0.0;
+  String _processMessage = 'Processing image...';
   bool _showSlider = false;
 
   FandeckColor? _targetFandeckColor;
@@ -253,6 +255,8 @@ class _EditorPageState extends State<EditorPage> {
 
     setState(() {
       _isProcessing = true;
+      _processProgress = 0.0;
+      _processMessage = 'Detecting surface...';
     });
     
     // Give UI a moment to show the loader
@@ -262,7 +266,13 @@ class _EditorPageState extends State<EditorPage> {
     AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
     AIMask? mask;
     try {
-      mask = await service.segmentByPoint(imagePath: effectivePath, point: pt);
+      mask = await service.segmentByPoint(
+        imagePath: effectivePath,
+        point: pt,
+        onProgress: (p, msg) {
+          if (mounted) setState(() { _processProgress = p; _processMessage = msg; });
+        },
+      );
     } catch (e) {
       debugPrint("Tap segmentation error: $e");
     }
@@ -270,7 +280,13 @@ class _EditorPageState extends State<EditorPage> {
     if (mask == null && _currentAIMode == AIMode.pro) {
       // Fallback to lite for tap since pro might not support tap
       try {
-        mask = await _liteSegmentationService.segmentByPoint(imagePath: effectivePath, point: pt);
+        mask = await _liteSegmentationService.segmentByPoint(
+          imagePath: effectivePath,
+          point: pt,
+          onProgress: (p, msg) {
+            if (mounted) setState(() { _processProgress = p; _processMessage = msg; });
+          },
+        );
       } catch (e) {
         debugPrint("Fallback segmentation error: $e");
       }
@@ -573,6 +589,8 @@ class _EditorPageState extends State<EditorPage> {
 
     setState(() {
       _isProcessing = true;
+      _processProgress = 0.20;
+      _processMessage = 'Applying Nippon Paint shade...';
     });
 
     // Yield 1 frame so UI renders the loading spinner smoothly before isolate processing
@@ -587,10 +605,16 @@ class _EditorPageState extends State<EditorPage> {
         showMaskOverlay: false,
       );
 
+      setState(() {
+        _processProgress = 0.60;
+      });
+
       final resultBytes = await processImage(params);
 
       if (!mounted) return;
       setState(() {
+        _processProgress = 1.0;
+        _processMessage = 'Complete!';
         if (resultBytes != null) {
           _editedBytes = resultBytes;
         }
@@ -835,6 +859,8 @@ class _EditorPageState extends State<EditorPage> {
 
       setState(() {
         _isProcessing = true;
+        _processProgress = 0.0;
+        _processMessage = "Analyzing prompt...";
       });
       
       await Future.delayed(const Duration(milliseconds: 50));
@@ -846,6 +872,9 @@ class _EditorPageState extends State<EditorPage> {
           imagePath: effectivePath,
           object: parsedCommand.objectName,
           position: null,
+          onProgress: (p, msg) {
+            if (mounted) setState(() { _processProgress = p; _processMessage = msg; });
+          },
         );
       } catch (e) {
         if (mounted) {
@@ -1384,15 +1413,79 @@ class _EditorPageState extends State<EditorPage> {
                             ),
                           if (_isProcessing)
                             Container(
-                              color: Colors.black45,
-                              child: const Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    CircularProgressIndicator(color: Color(0xFFC8102E)),
-                                    SizedBox(height: 16),
-                                    Text('Processing image...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                  ],
+                              color: Colors.black54,
+                              child: Center(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(horizontal: 40),
+                                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1A1A1A).withValues(alpha: 0.95),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: Colors.white12),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Colors.black87,
+                                        blurRadius: 24,
+                                        spreadRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          SizedBox(
+                                            width: 72,
+                                            height: 72,
+                                            child: CircularProgressIndicator(
+                                              value: _processProgress > 0.0 ? _processProgress.clamp(0.0, 1.0) : null,
+                                              color: const Color(0xFFC8102E),
+                                              backgroundColor: Colors.white12,
+                                              strokeWidth: 5,
+                                            ),
+                                          ),
+                                          Text(
+                                            _processProgress > 0.0
+                                                ? '${(_processProgress * 100).toInt()}%'
+                                                : '',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              letterSpacing: 0.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 20),
+                                      Text(
+                                        _processMessage,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      if (_processProgress > 0.0) ...[
+                                        const SizedBox(height: 14),
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(6),
+                                          child: SizedBox(
+                                            width: 160,
+                                            height: 6,
+                                            child: LinearProgressIndicator(
+                                              value: _processProgress.clamp(0.0, 1.0),
+                                              color: const Color(0xFFC8102E),
+                                              backgroundColor: Colors.white10,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),

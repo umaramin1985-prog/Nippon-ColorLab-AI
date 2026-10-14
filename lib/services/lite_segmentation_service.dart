@@ -19,12 +19,17 @@ class LiteSegmentationService implements AISegmentationService {
   int _lastOrigW = 0;
   int _lastOrigH = 0;
 
-  Future<void> _ensureEmbeddings(String imagePath) async {
+  Future<void> _ensureEmbeddings(String imagePath, [ProgressCallback? onProgress]) async {
     try {
+      onProgress?.call(0.05, "Initializing AI models...");
       final samReady = await LiteModelManager().initSam();
       if (!samReady) return;
-      if (_lastImagePath == imagePath && _lastImageEmbeddings != null) return;
+      if (_lastImagePath == imagePath && _lastImageEmbeddings != null) {
+        onProgress?.call(0.25, "Image features ready");
+        return;
+      }
 
+      onProgress?.call(0.10, "Preprocessing image...");
       final imageBytes = await File(imagePath).readAsBytes();
       
       final prepData = await Isolate.run(() {
@@ -76,10 +81,12 @@ class LiteSegmentationService implements AISegmentationService {
       final encoderRunOptions = OrtRunOptions();
       List<dynamic>? encoderOutputs;
       try {
+        onProgress?.call(0.18, "Generating image embeddings...");
         final encoderInputs = {encoderSession.inputNames[0]: encoderInputTensor};
         encoderOutputs = await encoderSession.runAsync(encoderRunOptions, encoderInputs);
         if (encoderOutputs == null) return;
         
+        onProgress?.call(0.26, "Extracting features...");
         final rawEmbeddings = encoderOutputs[0]?.value;
         
         final flatEmbeddings = await Isolate.run(() {
@@ -121,14 +128,16 @@ class LiteSegmentationService implements AISegmentationService {
     required String imagePath,
     required String object,
     String? position,
+    ProgressCallback? onProgress,
   }) async {
     try {
-      await _ensureEmbeddings(imagePath);
+      await _ensureEmbeddings(imagePath, onProgress);
       if (_lastImageEmbeddings == null) return null;
 
       final decoderSession = LiteModelManager().samDecoder;
       if (decoderSession == null) return null;
 
+      onProgress?.call(0.30, "Analyzing prompt '$object'...");
       await _matcher.initialize();
 
       final normObj = object.toLowerCase().trim();
@@ -152,6 +161,7 @@ class LiteSegmentationService implements AISegmentationService {
         clipPrompt = 'a chair, sofa or seating furniture';
       }
 
+      onProgress?.call(0.38, "Locating surfaces...");
       final textEmbedding = await _matcher.getTextEmbedding(clipPrompt);
       final imageBytes = await File(imagePath).readAsBytes();
       final image = await Isolate.run(() => img.decodeImage(imageBytes));
@@ -224,6 +234,9 @@ class LiteSegmentationService implements AISegmentationService {
       }
 
       for (int i = 0; i < samplePoints.length; i++) {
+        final progress = 0.40 + ((i + 1) / samplePoints.length) * 0.52;
+        onProgress?.call(progress, "Scanning surfaces (${(progress * 100).toInt()}%)...");
+
         final posPt = samplePoints[i];
         final negPts = negativePoints[i];
 
@@ -443,7 +456,9 @@ class LiteSegmentationService implements AISegmentationService {
         await Future.delayed(const Duration(milliseconds: 2));
       }
 
+      onProgress?.call(0.96, "Selecting optimal surface...");
       imageEmbeddingsTensor.release();
+      onProgress?.call(1.0, "Surface detected!");
       return bestMask;
     } catch (e, stack) {
       debugPrint("LiteSegmentation Error: $e\n$stack");
@@ -455,11 +470,14 @@ class LiteSegmentationService implements AISegmentationService {
   Future<AIMask?> segmentByPoint({
     required String imagePath,
     required math.Point<int> point,
+    ProgressCallback? onProgress,
   }) async {
     try {
-      await _ensureEmbeddings(imagePath);
+      onProgress?.call(0.15, "Loading image features...");
+      await _ensureEmbeddings(imagePath, onProgress);
       if (_lastImageEmbeddings == null) return null;
 
+      onProgress?.call(0.40, "Segmenting tapped surface...");
       final decoderSession = LiteModelManager().samDecoder;
       if (decoderSession == null) return null;
 
@@ -651,6 +669,7 @@ class LiteSegmentationService implements AISegmentationService {
 
       if (maskResult == null) return null;
 
+      onProgress?.call(1.0, "Surface detected!");
       final confMask = maskResult[0] as List<double>;
       return AIMask(confMask, 0, 0, _lastOrigW, _lastOrigH);
     } catch (e, stack) {

@@ -126,16 +126,17 @@ class ProSegmentationService implements AISegmentationService {
     required String imagePath,
     required String object,
     String? position,
+    ProgressCallback? onProgress,
   }) async {
     // This is no longer used for FLUX, returning null
     return null;
   }
 
-
   @override
   Future<AIMask?> segmentByPoint({
     required String imagePath,
     required math.Point<int> point,
+    ProgressCallback? onProgress,
   }) async {
     return null;
   }
