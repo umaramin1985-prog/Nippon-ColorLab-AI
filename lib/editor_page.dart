@@ -78,6 +78,60 @@ class _EditorPageState extends State<EditorPage> {
 
   FandeckColor? _targetFandeckColor;
   Color get _targetColor => _targetFandeckColor?.color ?? Colors.white;
+  final List<FandeckColor> _appliedColors = [];
+
+  void _recordAppliedColor(FandeckColor c) {
+    _appliedColors.removeWhere((col) => col.name == c.name);
+    _appliedColors.insert(0, c);
+  }
+
+  FandeckColor? _findMatchingFandeckColor(Color color) {
+    for (final c in globalFandeckColors) {
+      if (c.r == color.red && c.g == color.green && c.b == color.blue) {
+        return c;
+      }
+    }
+    FandeckColor? best;
+    int minD = 999999;
+    for (final c in globalFandeckColors) {
+      final dr = c.r - color.red;
+      final dg = c.g - color.green;
+      final db = c.b - color.blue;
+      final d = dr * dr + dg * dg + db * db;
+      if (d < minD) {
+        minD = d;
+        best = c;
+      }
+    }
+    if (minD < 100) return best;
+    return null;
+  }
+
+  List<FandeckColor> get allAppliedColors {
+    final list = <FandeckColor>[];
+    if (_targetFandeckColor != null) {
+      list.add(_targetFandeckColor!);
+    }
+    for (final c in _appliedColors) {
+      if (!list.any((item) => item.name == c.name)) {
+        list.add(c);
+      }
+    }
+    for (final edit in _maskEdits.reversed) {
+      final match = _findMatchingFandeckColor(edit.color);
+      if (match != null && !list.any((c) => c.name == match.name)) {
+        list.add(match);
+      }
+    }
+    for (final edit in _tapEdits.reversed) {
+      final match = _findMatchingFandeckColor(edit.color);
+      if (match != null && !list.any((c) => c.name == match.name)) {
+        list.add(match);
+      }
+    }
+    return list;
+  }
+
   double _tolerance = 0.1;
   List<TapEdit> _tapEdits = [];
   List<MaskEdit> _maskEdits = [];
@@ -382,17 +436,17 @@ class _EditorPageState extends State<EditorPage> {
       return d1.compareTo(d2);
     });
 
-    final lastApplied = _targetFandeckColor;
+    final appliedColors = allAppliedColors;
     final similarColors = <FandeckColor>[];
     for (var c in sortedColors) {
-      if (lastApplied != null && c.name == lastApplied.name) continue;
+      if (appliedColors.any((a) => a.name == c.name)) continue;
       if (!similarColors.any((s) => s.name == c.name)) {
         similarColors.add(c);
       }
       if (similarColors.length >= 7) break;
     }
 
-    int activeFilter = 0; // 0: All, 1: Similar Colors, 2: Last Applied
+    int activeFilter = 0; // 0: All, 1: Similar Colors, 2: Applied Colors
 
     showModalBottomSheet(
       context: context,
@@ -401,11 +455,12 @@ class _EditorPageState extends State<EditorPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            Widget buildSwatch(FandeckColor c, {required bool isLastApplied}) {
+            Widget buildSwatch(FandeckColor c, {required bool isApplied, required bool isLatest}) {
               return GestureDetector(
                 onTap: () {
                   setState(() {
                     _targetFandeckColor = c;
+                    _recordAppliedColor(c);
                     if (mask != null) {
                       _maskEdits.add(MaskEdit(mask, c.color));
                       _editHistory.add(EditType.aiMask);
@@ -430,21 +485,21 @@ class _EditorPageState extends State<EditorPage> {
                             color: c.color,
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: isLastApplied ? const Color(0xFFC8102E) : Colors.white,
-                              width: isLastApplied ? 2.5 : 2.0,
+                              color: isApplied ? const Color(0xFFC8102E) : Colors.white,
+                              width: isApplied ? 2.5 : 2.0,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: isLastApplied
+                                color: isApplied
                                     ? const Color(0xFFC8102E).withValues(alpha: 0.5)
                                     : Colors.black45,
-                                blurRadius: isLastApplied ? 8 : 4,
-                                spreadRadius: isLastApplied ? 1 : 0,
+                                blurRadius: isApplied ? 8 : 4,
+                                spreadRadius: isApplied ? 1 : 0,
                               ),
                             ],
                           ),
                         ),
-                        if (isLastApplied)
+                        if (isApplied)
                           Container(
                             width: 20,
                             height: 20,
@@ -452,8 +507,8 @@ class _EditorPageState extends State<EditorPage> {
                               color: Colors.black54,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
-                              Icons.history,
+                            child: Icon(
+                              isLatest ? Icons.history : Icons.check,
                               size: 13,
                               color: Colors.white,
                             ),
@@ -478,15 +533,15 @@ class _EditorPageState extends State<EditorPage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: isLastApplied ? const Color(0xFFC8102E) : Colors.white12,
+                        color: isApplied ? const Color(0xFFC8102E) : Colors.white12,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        isLastApplied ? 'Last Applied' : 'Similar',
+                        isLatest ? 'Last Applied' : (isApplied ? 'Applied' : 'Similar'),
                         style: TextStyle(
                           fontSize: 8,
-                          fontWeight: isLastApplied ? FontWeight.bold : FontWeight.normal,
-                          color: isLastApplied ? Colors.white : Colors.white60,
+                          fontWeight: isApplied ? FontWeight.bold : FontWeight.normal,
+                          color: isApplied ? Colors.white : Colors.white60,
                         ),
                       ),
                     ),
@@ -574,28 +629,28 @@ class _EditorPageState extends State<EditorPage> {
                       ),
                     ),
                   ),
-                  if (lastApplied != null) ...[
+                  if (appliedColors.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     Center(
                       child: Wrap(
                         spacing: 8,
                         children: [
-                          buildFilterChip('All', 0, 1 + similarColors.length),
+                          buildFilterChip('All', 0, appliedColors.length + similarColors.length),
                           buildFilterChip('Similar Colors', 1, similarColors.length),
-                          buildFilterChip('Last Applied', 2, 1),
+                          buildFilterChip('Applied Colors', 2, appliedColors.length),
                         ],
                       ),
                     ),
                   ],
                   const SizedBox(height: 18),
-                  if (lastApplied != null && (activeFilter == 0 || activeFilter == 2)) ...[
+                  if (appliedColors.isNotEmpty && (activeFilter == 0 || activeFilter == 2)) ...[
                     Row(
-                      children: const [
-                        Icon(Icons.history, size: 14, color: Color(0xFFC8102E)),
-                        SizedBox(width: 6),
+                      children: [
+                        const Icon(Icons.history, size: 14, color: Color(0xFFC8102E)),
+                        const SizedBox(width: 6),
                         Text(
-                          'LAST APPLIED COLOR',
-                          style: TextStyle(
+                          'APPLIED COLOURS (${appliedColors.length})',
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 0.8,
@@ -605,11 +660,19 @@ class _EditorPageState extends State<EditorPage> {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    buildSwatch(lastApplied, isLastApplied: true),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: appliedColors.asMap().entries.map((entry) {
+                        final idx = entry.key;
+                        final c = entry.value;
+                        return buildSwatch(c, isApplied: true, isLatest: idx == 0);
+                      }).toList(),
+                    ),
                     if (activeFilter == 0 && similarColors.isNotEmpty) const SizedBox(height: 16),
                   ],
                   if (activeFilter == 0 || activeFilter == 1) ...[
-                    if (lastApplied != null)
+                    if (appliedColors.isNotEmpty)
                       Row(
                         children: [
                           const Icon(Icons.palette_outlined, size: 14, color: Colors.white54),
@@ -625,11 +688,11 @@ class _EditorPageState extends State<EditorPage> {
                           ),
                         ],
                       ),
-                    if (lastApplied != null) const SizedBox(height: 10),
+                    if (appliedColors.isNotEmpty) const SizedBox(height: 10),
                     Wrap(
                       spacing: 12,
                       runSpacing: 12,
-                      children: similarColors.map((c) => buildSwatch(c, isLastApplied: false)).toList(),
+                      children: similarColors.map((c) => buildSwatch(c, isApplied: false, isLatest: false)).toList(),
                     ),
                   ],
                   const SizedBox(height: 22),
@@ -642,6 +705,7 @@ class _EditorPageState extends State<EditorPage> {
                         _showColorPicker(onColorSelected: (c) {
                           setState(() {
                             _targetFandeckColor = c;
+                            _recordAppliedColor(c);
                             if (mask != null) {
                               _maskEdits.add(MaskEdit(mask, c.color));
                               _editHistory.add(EditType.aiMask);
@@ -833,6 +897,229 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
+  void _showAppliedColorsSheet(List<FandeckColor> colors) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final currentApplied = allAppliedColors;
+            return Container(
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                color: Color(0xFF141414),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(top: BorderSide(color: Colors.white24, width: 1)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFC8102E).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.palette, color: Color(0xFFC8102E), size: 18),
+                          ),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Applied Room Colours',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              Text(
+                                '${currentApplied.length} ${currentApplied.length == 1 ? "shade" : "shades"} in current design',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.45,
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: currentApplied.length,
+                      separatorBuilder: (context, index) => const Divider(color: Colors.white12, height: 16),
+                      itemBuilder: (context, index) {
+                        final c = currentApplied[index];
+                        final isLatest = index == 0;
+                        final isCurrentlySelected = _targetFandeckColor?.name == c.name;
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            setState(() {
+                              _targetFandeckColor = c;
+                              _recordAppliedColor(c);
+                              _updateLastEditColor(c.color);
+                            });
+                            Navigator.pop(context);
+                            _processImage();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                            child: Row(
+                              children: [
+                                Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: c.color,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: isCurrentlySelected
+                                              ? const Color(0xFFC8102E)
+                                              : Colors.white38,
+                                          width: isCurrentlySelected ? 2.5 : 1.5,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: isCurrentlySelected
+                                                ? const Color(0xFFC8102E).withValues(alpha: 0.4)
+                                                : Colors.black38,
+                                            blurRadius: 6,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (isCurrentlySelected)
+                                      const Icon(Icons.check, size: 18, color: Colors.white),
+                                  ],
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        c.name,
+                                        style: const TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'RGB (${c.r}, ${c.g}, ${c.b})',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.white54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isLatest
+                                        ? const Color(0xFFC8102E)
+                                        : Colors.white.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isLatest ? const Color(0xFFC8102E) : Colors.white24,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        isLatest ? Icons.history : Icons.check_circle_outline,
+                                        size: 12,
+                                        color: isLatest ? Colors.white : Colors.white70,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        isLatest ? 'Last Applied' : 'Applied',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: isLatest ? FontWeight.bold : FontWeight.normal,
+                                          color: isLatest ? Colors.white : Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showColorPicker();
+                          },
+                          icon: const Icon(Icons.palette_outlined, size: 16),
+                          label: const Text('Browse Fandeck'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Colors.white24),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showColorPicker({void Function(FandeckColor)? onColorSelected}) {
     String searchQuery = '';
     showDialog(
@@ -843,6 +1130,7 @@ class _EditorPageState extends State<EditorPage> {
             final filteredColors = globalFandeckColors
                 .where((c) => c.name.toLowerCase().contains(searchQuery.toLowerCase()))
                 .toList();
+            final appliedList = allAppliedColors;
 
             return AlertDialog(
               title: const Text('Fandeck Colors'),
@@ -856,7 +1144,7 @@ class _EditorPageState extends State<EditorPage> {
                         hintText: 'Search colors...',
                         prefixIcon: const Icon(Icons.search, color: Colors.white54),
                         filled: true,
-                        fillColor: Colors.white.withOpacity(0.05),
+                        fillColor: Colors.white.withValues(alpha: 0.05),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
@@ -880,8 +1168,11 @@ class _EditorPageState extends State<EditorPage> {
                         itemCount: filteredColors.length,
                         itemBuilder: (context, index) {
                           final c = filteredColors[index];
+                          final isApplied = appliedList.any((a) => a.name == c.name);
+                          final isLatest = appliedList.isNotEmpty && appliedList.first.name == c.name;
                           return GestureDetector(
                             onTap: () {
+                              _recordAppliedColor(c);
                               if (onColorSelected != null) {
                                 Navigator.of(context).pop();
                                 onColorSelected(c);
@@ -898,25 +1189,49 @@ class _EditorPageState extends State<EditorPage> {
                               decoration: BoxDecoration(
                                 color: c.color,
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.white24),
-                              ),
-                              child: Align(
-                                alignment: Alignment.bottomCenter,
-                                child: Container(
-                                  width: double.infinity,
-                                  color: Colors.black54,
-                                  padding: const EdgeInsets.symmetric(vertical: 2),
-                                  child: Text(
-                                    c.name,
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.white,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                                border: Border.all(
+                                  color: isApplied ? const Color(0xFFC8102E) : Colors.white24,
+                                  width: isApplied ? 2.0 : 1.0,
                                 ),
+                              ),
+                              child: Stack(
+                                children: [
+                                  if (isApplied)
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black54,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          isLatest ? Icons.history : Icons.check,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Container(
+                                      width: double.infinity,
+                                      color: Colors.black54,
+                                      padding: const EdgeInsets.symmetric(vertical: 2),
+                                      child: Text(
+                                        c.name,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.white,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           );
@@ -1147,10 +1462,13 @@ class _EditorPageState extends State<EditorPage> {
                 children: top10
                     .map(
                       (c) {
-                        final isLastApplied = _targetFandeckColor != null && c.name == _targetFandeckColor!.name;
+                        final appliedList = allAppliedColors;
+                        final isApplied = appliedList.any((a) => a.name == c.name);
+                        final isLatest = appliedList.isNotEmpty && appliedList.first.name == c.name;
                         return GestureDetector(
                           onTap: () {
                             Navigator.pop(context);
+                            _recordAppliedColor(c);
                             if (onColorSelected != null) {
                               onColorSelected(c);
                               return;
@@ -1184,18 +1502,18 @@ class _EditorPageState extends State<EditorPage> {
                                       color: c.color,
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                        color: isLastApplied ? const Color(0xFFC8102E) : Colors.white,
-                                        width: isLastApplied ? 2.5 : 2,
+                                        color: isApplied ? const Color(0xFFC8102E) : Colors.white,
+                                        width: isApplied ? 2.5 : 2,
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: isLastApplied ? const Color(0xFFC8102E).withValues(alpha: 0.5) : Colors.black45,
+                                          color: isApplied ? const Color(0xFFC8102E).withValues(alpha: 0.5) : Colors.black45,
                                           blurRadius: 4,
                                         ),
                                       ],
                                     ),
                                   ),
-                                  if (isLastApplied)
+                                  if (isApplied)
                                     Container(
                                       width: 20,
                                       height: 20,
@@ -1203,7 +1521,11 @@ class _EditorPageState extends State<EditorPage> {
                                         color: Colors.black54,
                                         shape: BoxShape.circle,
                                       ),
-                                      child: const Icon(Icons.history, size: 13, color: Colors.white),
+                                      child: Icon(
+                                        isLatest ? Icons.history : Icons.check,
+                                        size: 13,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                 ],
                               ),
@@ -1221,20 +1543,20 @@ class _EditorPageState extends State<EditorPage> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              if (isLastApplied) ...[
+                              if (isApplied) ...[
                                 const SizedBox(height: 2),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFC8102E),
+                                    color: isLatest ? const Color(0xFFC8102E) : Colors.white12,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: const Text(
-                                    'Last Applied',
+                                  child: Text(
+                                    isLatest ? 'Last Applied' : 'Applied',
                                     style: TextStyle(
                                       fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
+                                      fontWeight: isLatest ? FontWeight.bold : FontWeight.normal,
+                                      color: isLatest ? Colors.white : Colors.white70,
                                     ),
                                   ),
                                 ),
@@ -1837,11 +2159,19 @@ class _EditorPageState extends State<EditorPage> {
       ),
 
           // Floating Manual Color Picker
+          // Floating Manual Color Picker / Applied Colors Palette
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 24,
             right: 16,
             child: GestureDetector(
-              onTap: _showColorPicker,
+              onTap: () {
+                final applied = allAppliedColors;
+                if (applied.isEmpty) {
+                  _showColorPicker();
+                } else {
+                  _showAppliedColorsSheet(applied);
+                }
+              },
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(26),
                 child: BackdropFilter(
@@ -1856,7 +2186,31 @@ class _EditorPageState extends State<EditorPage> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (_targetFandeckColor != null)
+                        if (allAppliedColors.isNotEmpty)
+                          SizedBox(
+                            height: 18,
+                            width: math.min(allAppliedColors.length, 3) * 12.0 + 8,
+                            child: Stack(
+                              children: allAppliedColors.take(3).toList().asMap().entries.map((entry) {
+                                final idx = entry.key;
+                                final c = entry.value;
+                                return Positioned(
+                                  left: idx * 12.0,
+                                  child: Container(
+                                    width: 18,
+                                    height: 18,
+                                    decoration: BoxDecoration(
+                                      color: c.color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 1.5),
+                                      boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 2)],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          )
+                        else if (_targetFandeckColor != null)
                           Container(
                             width: 16,
                             height: 16,
@@ -1870,9 +2224,11 @@ class _EditorPageState extends State<EditorPage> {
                           const Icon(Icons.palette_outlined, color: Colors.white, size: 16),
                         const SizedBox(width: 8),
                         ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 90),
+                          constraints: const BoxConstraints(maxWidth: 110),
                           child: Text(
-                            _targetFandeckColor?.name ?? 'Manual',
+                            allAppliedColors.length > 1
+                                ? '${allAppliedColors.length} Colours'
+                                : (_targetFandeckColor?.name ?? 'Manual'),
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
