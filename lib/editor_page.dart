@@ -575,6 +575,9 @@ class _EditorPageState extends State<EditorPage> {
       _isProcessing = true;
     });
 
+    // Yield 1 frame so UI renders the loading spinner smoothly before isolate processing
+    await Future.delayed(const Duration(milliseconds: 16));
+
     try {
       final params = ProcessImageParams(
         imageBytes: _originalBytes!,

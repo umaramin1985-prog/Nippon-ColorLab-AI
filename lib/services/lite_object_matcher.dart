@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'onnxruntime_stub.dart' if (dart.library.io) 'package:onnxruntime/onnxruntime.dart';
@@ -83,6 +83,68 @@ class LiteObjectMatcher {
       return _normalize(flatEmbeds);
     } catch (e, stack) {
       print("getTextEmbedding error: $e\n$stack");
+      return List<double>.filled(512, 0.0);
+    }
+  }
+
+  Future<List<double>> getCropEmbedding(img.Image image, int x, int y, int width, int height) async {
+    try {
+      final session = LiteModelManager().clipVision;
+      if (session == null) throw Exception("CLIP Vision session not initialized");
+
+      final floatList = await Isolate.run(() {
+        final crop = img.copyCrop(image, x: x, y: y, width: width, height: height);
+        final resized = img.copyResizeCropSquare(crop, size: 256);
+
+        final list = Float32List(1 * 3 * 256 * 256);
+        final mean = [0.48145466, 0.4578275, 0.40821073];
+        final std = [0.26862954, 0.26130258, 0.27577711];
+
+        int planeSize = 256 * 256;
+        for (int py = 0; py < 256; py++) {
+          for (int px = 0; px < 256; px++) {
+            final pixel = resized.getPixel(px, py);
+            int index = py * 256 + px;
+            list[index] = ((pixel.r / 255.0) - mean[0]) / std[0];
+            list[planeSize + index] = ((pixel.g / 255.0) - mean[1]) / std[1];
+            list[2 * planeSize + index] = ((pixel.b / 255.0) - mean[2]) / std[2];
+          }
+        }
+        return list;
+      });
+
+      final inputTensor = OrtValueTensor.createTensorWithDataList(floatList, [1, 3, 256, 256]);
+      final runOptions = OrtRunOptions();
+      final inputs = {session.inputNames[0]: inputTensor};
+
+      final outputs = await session.runAsync(runOptions, inputs);
+      if (outputs == null) throw Exception("Crop embedding runAsync returned null");
+      final rawEmbeds = outputs[0]?.value;
+      
+      final flatEmbeds = Float32List(512);
+      if (rawEmbeds is List) {
+        int flatIdx = 0;
+        void flatten(dynamic list) {
+          if (list is List) {
+            for (var e in list) { flatten(e); }
+          } else if (list is num) {
+            if (flatIdx < 512) flatEmbeds[flatIdx++] = list.toDouble();
+          }
+        }
+        flatten(rawEmbeds);
+      } else if (rawEmbeds is Float32List) {
+        flatEmbeds.setAll(0, rawEmbeds);
+      }
+
+      inputTensor.release();
+      for (var out in outputs) {
+        out?.release();
+      }
+      runOptions.release();
+
+      return _normalize(flatEmbeds);
+    } catch (e, stack) {
+      debugPrint("getCropEmbedding error: $e\n$stack");
       return List<double>.filled(512, 0.0);
     }
   }

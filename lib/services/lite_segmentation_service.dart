@@ -172,19 +172,18 @@ class LiteSegmentationService implements AISegmentationService {
 
       if (isCeiling) {
         // Ceiling is at the top of the room
-        for (var gy in [0.08, 0.15, 0.22]) {
+        for (var gy in [0.10, 0.18]) {
           for (var gx in [0.25, 0.50, 0.75]) {
             samplePoints.add([gx * newW, gy * newH]);
-            // Negative prompt down in the wall area
             negativePoints.add([
               [gx * newW, 0.50 * newH],
             ]);
           }
         }
       } else if (isWall) {
-        // Walls are vertical surfaces spanning middle and upper-middle
-        for (var gy in [0.22, 0.30, 0.38, 0.46]) {
-          for (var gx in [0.20, 0.35, 0.50, 0.65, 0.80]) {
+        // Walls are vertical surfaces spanning middle and upper-middle (6 strategic points)
+        for (var gy in [0.28, 0.42]) {
+          for (var gx in [0.25, 0.50, 0.75]) {
             samplePoints.add([gx * newW, gy * newH]);
             // Negative prompts: ceiling and table/floor to isolate wall surface
             negativePoints.add([
@@ -195,7 +194,7 @@ class LiteSegmentationService implements AISegmentationService {
         }
       } else if (isFloor) {
         // Floor is at the bottom
-        for (var gy in [0.75, 0.85, 0.92]) {
+        for (var gy in [0.80, 0.90]) {
           for (var gx in [0.30, 0.50, 0.70]) {
             samplePoints.add([gx * newW, gy * newH]);
             negativePoints.add([
@@ -206,7 +205,7 @@ class LiteSegmentationService implements AISegmentationService {
         }
       } else if (isTable) {
         // Tables are horizontal surfaces in the lower-middle half
-        for (var gy in [0.58, 0.68, 0.78]) {
+        for (var gy in [0.60, 0.75]) {
           for (var gx in [0.30, 0.50, 0.70]) {
             samplePoints.add([gx * newW, gy * newH]);
             negativePoints.add([
@@ -215,10 +214,10 @@ class LiteSegmentationService implements AISegmentationService {
           }
         }
       } else {
-        // General object: 3x3 grid
-        for (int gy = 1; gy <= 3; gy++) {
-          for (int gx = 1; gx <= 3; gx++) {
-            samplePoints.add([(gx * newW / 4), (gy * newH / 4)]);
+        // General object: 2x2 grid
+        for (int gy = 1; gy <= 2; gy++) {
+          for (int gx = 1; gx <= 2; gx++) {
+            samplePoints.add([(gx * newW / 3), (gy * newH / 3)]);
             negativePoints.add([]);
           }
         }
@@ -313,10 +312,10 @@ class LiteSegmentationService implements AISegmentationService {
             return null;
           }
 
-          // Connected component BFS
+          // Connected component BFS using Float32List (TypedData, zero boxing overhead)
           final visited = Uint8List(currentOrigW * currentOrigH);
           final queue = <int>[];
-          final confMask = List<double>.filled(currentOrigW * currentOrigH, 0.0);
+          final confMask = Float32List(currentOrigW * currentOrigH);
 
           int startIdx = seedY * currentOrigW + seedX;
           queue.add(startIdx);
@@ -390,7 +389,7 @@ class LiteSegmentationService implements AISegmentationService {
         int maxX = maskResult[3] as int;
         int maxY = maskResult[4] as int;
         int pixelCount = maskResult[5] as int;
-        final confMask = maskResult[0] as List<double>;
+        final confMask = maskResult[0] as Float32List;
 
         if (maxX > minX && maxY > minY) {
           int cropW = maxX - minX;
@@ -402,15 +401,10 @@ class LiteSegmentationService implements AISegmentationService {
 
           // Spatial validation
           if (isCeiling) {
-            // Ceiling MUST be near the top: bounding box shouldn't start below 25% or have center below 40%
             if (topRatio > 0.25 || centerY > 0.40) continue;
           } else if (isWall) {
-            // Wall is a background vertical surface:
-            // 1. It CANNOT start purely in the lower half (reject tables, desks, rugs, floors)
             if (topRatio > 0.38 || centerY > 0.52) continue;
-            // 2. Wall must have substantial height and extend downwards
             if (bottomRatio < 0.30 || heightRatio < 0.15) continue;
-            // 3. Wall shouldn't be purely a thin strip at the very top (ceiling)
             if (topRatio < 0.05 && bottomRatio < 0.25) continue;
           } else if (isFloor) {
             if (bottomRatio < 0.70 || centerY < 0.55) continue;
@@ -418,29 +412,35 @@ class LiteSegmentationService implements AISegmentationService {
             if (centerY < 0.38 || topRatio < 0.20) continue;
           }
 
-          img.Image candidateCrop = await Isolate.run(() => img.copyCrop(image, x: minX, y: minY, width: cropW, height: cropH));
-          final candidateEmbed = await _matcher.getImageEmbedding(candidateCrop);
-          double similarity = _matcher.calculateSimilarity(textEmbedding, candidateEmbed);
-
           double areaRatio = (pixelCount) / (_lastOrigW * _lastOrigH);
-          double score = similarity + (areaRatio * 0.05);
-
-          // Spatial prior boost
+          double spatialBoost = 0.0;
           if (isCeiling && topRatio < 0.10) {
-            score += 0.08;
+            spatialBoost = 0.08;
           } else if (isWall && topRatio < 0.28 && centerY < 0.50 && bottomRatio > 0.40) {
-            score += 0.10;
+            spatialBoost = 0.10;
           } else if (isFloor && bottomRatio > 0.85) {
-            score += 0.08;
+            spatialBoost = 0.08;
           } else if (isTable && centerY > 0.50 && bottomRatio > 0.60) {
-            score += 0.08;
+            spatialBoost = 0.08;
           }
+
+          // Branch pruning: skip expensive CLIP inference if candidate cannot beat bestScore
+          if (bestScore > -1e8 && (0.25 + (areaRatio * 0.05) + spatialBoost) <= bestScore) {
+            continue;
+          }
+
+          final candidateEmbed = await _matcher.getCropEmbedding(image, minX, minY, cropW, cropH);
+          double similarity = _matcher.calculateSimilarity(textEmbedding, candidateEmbed);
+          double score = similarity + (areaRatio * 0.05) + spatialBoost;
 
           if (score > bestScore) {
             bestScore = score;
             bestMask = AIMask(confMask, 0, 0, _lastOrigW, _lastOrigH);
           }
         }
+
+        // Yield to the UI event loop so the progress indicator animation remains 60FPS fluid
+        await Future.delayed(const Duration(milliseconds: 2));
       }
 
       imageEmbeddingsTensor.release();
