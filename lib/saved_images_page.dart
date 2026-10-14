@@ -32,7 +32,11 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
       final docDir = await getApplicationDocumentsDirectory();
       final savedDir = Directory('${docDir.path}/saved_images');
       if (await savedDir.exists()) {
-        final files = savedDir.listSync().whereType<File>().where((f) => f.path.endsWith('.png')).toList();
+        final files = savedDir
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.png') && !f.path.toLowerCase().endsWith('_orig.png'))
+            .toList();
         files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
         setState(() {
           _images = files;
@@ -61,6 +65,12 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC8102E)),
             onPressed: () {
+              try {
+                final origFile = File(file.path.replaceAll(RegExp(r'\.png$', caseSensitive: false), '_orig.png'));
+                if (origFile.existsSync()) {
+                  origFile.deleteSync();
+                }
+              } catch (_) {}
               file.deleteSync();
               setState(() => _images.remove(file));
               Navigator.pop(context);
@@ -142,9 +152,15 @@ class _SavedImagesPageState extends State<SavedImagesPage> {
 
                               return GestureDetector(
                                 onTap: () {
+                                  final origPath = file.path.replaceAll(RegExp(r'\.png$', caseSensitive: false), '_orig.png');
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (context) => EditorPage(imagePath: file.path)),
+                                    MaterialPageRoute(
+                                      builder: (context) => EditorPage(
+                                        imagePath: file.path,
+                                        originalImagePath: File(origPath).existsSync() ? origPath : null,
+                                      ),
+                                    ),
                                   );
                                 },
                                 child: Container(

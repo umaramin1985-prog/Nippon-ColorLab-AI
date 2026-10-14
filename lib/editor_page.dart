@@ -22,7 +22,8 @@ enum EditType { tap, aiMask }
 
 class EditorPage extends StatefulWidget {
   final String imagePath;
-  const EditorPage({super.key, required this.imagePath});
+  final String? originalImagePath;
+  const EditorPage({super.key, required this.imagePath, this.originalImagePath});
 
   @override
   State<EditorPage> createState() => _EditorPageState();
@@ -63,6 +64,8 @@ List<dynamic>? _normalizeAndEncodeImage(Uint8List bytes) {
 class _EditorPageState extends State<EditorPage> {
   img.Image? _originalImage;
   Uint8List? _originalBytes;
+  Uint8List? _referenceOriginalBytes;
+  Uint8List? get _beforeBytes => _referenceOriginalBytes ?? _originalBytes;
   Uint8List? _editedBytes;
   String _workingImagePath = '';
 
@@ -71,6 +74,7 @@ class _EditorPageState extends State<EditorPage> {
   double _processProgress = 0.0;
   String _processMessage = 'Processing image...';
   bool _showSlider = false;
+  int _recolorJobId = 0;
 
   FandeckColor? _targetFandeckColor;
   Color get _targetColor => _targetFandeckColor?.color ?? Colors.white;
@@ -138,6 +142,47 @@ class _EditorPageState extends State<EditorPage> {
 
   Future<void> _loadImage() async {
     try {
+      // Check for associated unedited original image (saved project)
+      String? origPath = widget.originalImagePath;
+      if (origPath == null || origPath.isEmpty) {
+        final candidate = widget.imagePath.replaceAll(RegExp(r'\.png$', caseSensitive: false), '_orig.png');
+        if (File(candidate).existsSync()) {
+          origPath = candidate;
+        }
+      }
+
+      if (origPath != null && File(origPath).existsSync()) {
+        final origBytes = await File(origPath).readAsBytes();
+        final editedBytes = await XFile(widget.imagePath).readAsBytes();
+
+        final origResult = await compute(_normalizeAndEncodeImage, origBytes);
+        final editedResult = await compute(_normalizeAndEncodeImage, editedBytes);
+
+        if (origResult != null && editedResult != null && mounted) {
+          final decodedEditedImg = editedResult[0] as img.Image;
+          final editedJpgBytes = editedResult[1] as Uint8List;
+          final origJpgBytes = origResult[1] as Uint8List;
+
+          try {
+            final tempDir = await getTemporaryDirectory();
+            final normFile = File('${tempDir.path}/norm_${DateTime.now().millisecondsSinceEpoch}.jpg');
+            await normFile.writeAsBytes(editedJpgBytes);
+            _workingImagePath = normFile.path;
+          } catch (e) {
+            debugPrint("Failed to write normalized temp file: $e");
+          }
+
+          setState(() {
+            _originalImage = decodedEditedImg;
+            _originalBytes = editedJpgBytes;
+            _referenceOriginalBytes = origJpgBytes;
+            _editedBytes = editedJpgBytes;
+            _isLoading = false;
+          });
+          return;
+        }
+      }
+
       final bytes = await XFile(widget.imagePath).readAsBytes();
 
       // Use compute to bake EXIF orientation and downscale to max 1280px in worker isolate
@@ -160,6 +205,7 @@ class _EditorPageState extends State<EditorPage> {
         setState(() {
           _originalImage = decodedImg;
           _originalBytes = jpgBytes;
+          _referenceOriginalBytes = jpgBytes;
           _editedBytes = _originalBytes;
           _isLoading = false;
         });
@@ -293,10 +339,19 @@ class _EditorPageState extends State<EditorPage> {
     }
 
     if (mounted) {
-      setState(() {
-        _isProcessing = false;
-      });
-      _suggestColors(pt, mask: mask);
+      if (mask != null) {
+        setState(() {
+          _processProgress = 1.0;
+          _processMessage = 'Complete!';
+        });
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+        _suggestColors(pt, mask: mask);
+      }
     }
   }
 
@@ -327,53 +382,264 @@ class _EditorPageState extends State<EditorPage> {
       return d1.compareTo(d2);
     });
 
-    final suggested = <FandeckColor>[];
-    if (_targetFandeckColor != null) {
-      suggested.add(_targetFandeckColor!);
-    }
+    final lastApplied = _targetFandeckColor;
+    final similarColors = <FandeckColor>[];
     for (var c in sortedColors) {
-      if (!suggested.any((s) => s.name == c.name)) {
-        suggested.add(c);
+      if (lastApplied != null && c.name == lastApplied.name) continue;
+      if (!similarColors.any((s) => s.name == c.name)) {
+        similarColors.add(c);
       }
-      if (suggested.length >= 4) break;
+      if (similarColors.length >= 7) break;
     }
-    for (var c in globalFandeckColors) {
-      if (!suggested.any((s) => s.name == c.name)) {
-        suggested.add(c);
-      }
-      if (suggested.length >= 8) break;
-    }
+
+    int activeFilter = 0; // 0: All, 1: Similar Colors, 2: Last Applied
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF111111),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            border: Border.all(color: Colors.white24),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Paint $surfaceTitle with Nippon Paint',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Widget buildSwatch(FandeckColor c, {required bool isLastApplied}) {
+              return GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _targetFandeckColor = c;
+                    if (mask != null) {
+                      _maskEdits.add(MaskEdit(mask, c.color));
+                      _editHistory.add(EditType.aiMask);
+                    } else {
+                      _tapEdits.add(TapEdit(pt, c.color, _tolerance));
+                      _editHistory.add(EditType.tap);
+                    }
+                  });
+                  Navigator.pop(context);
+                  _processImage();
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: c.color,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isLastApplied ? const Color(0xFFC8102E) : Colors.white,
+                              width: isLastApplied ? 2.5 : 2.0,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: isLastApplied
+                                    ? const Color(0xFFC8102E).withValues(alpha: 0.5)
+                                    : Colors.black45,
+                                blurRadius: isLastApplied ? 8 : 4,
+                                spreadRadius: isLastApplied ? 1 : 0,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (isLastApplied)
+                          Container(
+                            width: 20,
+                            height: 20,
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.history,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      width: 68,
+                      child: Text(
+                        c.name,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white70,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        color: isLastApplied ? const Color(0xFFC8102E) : Colors.white12,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        isLastApplied ? 'Last Applied' : 'Similar',
+                        style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: isLastApplied ? FontWeight.bold : FontWeight.normal,
+                          color: isLastApplied ? Colors.white : Colors.white60,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+              );
+            }
+
+            Widget buildFilterChip(String label, int index, int count) {
+              final isSelected = activeFilter == index;
+              return GestureDetector(
+                onTap: () => setSheetState(() => activeFilter = index),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected ? const Color(0xFFC8102E) : Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected ? const Color(0xFFC8102E) : Colors.white12,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                          color: isSelected ? Colors.white : Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white24 : Colors.white10,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: isSelected ? Colors.white : Colors.white54,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111111),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                border: Border.all(color: Colors.white24),
               ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: suggested
-                    .map(
-                      (c) => GestureDetector(
-                        onTap: () {
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Center(
+                    child: Text(
+                      'Paint $surfaceTitle with Nippon Paint',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  if (lastApplied != null) ...[
+                    const SizedBox(height: 14),
+                    Center(
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          buildFilterChip('All', 0, 1 + similarColors.length),
+                          buildFilterChip('Similar Colors', 1, similarColors.length),
+                          buildFilterChip('Last Applied', 2, 1),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  if (lastApplied != null && (activeFilter == 0 || activeFilter == 2)) ...[
+                    Row(
+                      children: const [
+                        Icon(Icons.history, size: 14, color: Color(0xFFC8102E)),
+                        SizedBox(width: 6),
+                        Text(
+                          'LAST APPLIED COLOR',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    buildSwatch(lastApplied, isLastApplied: true),
+                    if (activeFilter == 0 && similarColors.isNotEmpty) const SizedBox(height: 16),
+                  ],
+                  if (activeFilter == 0 || activeFilter == 1) ...[
+                    if (lastApplied != null)
+                      Row(
+                        children: [
+                          const Icon(Icons.palette_outlined, size: 14, color: Colors.white54),
+                          const SizedBox(width: 6),
+                          Text(
+                            'SIMILAR TO $surfaceTitle',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.8,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    if (lastApplied != null) const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: similarColors.map((c) => buildSwatch(c, isLastApplied: false)).toList(),
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showColorPicker(onColorSelected: (c) {
                           setState(() {
                             _targetFandeckColor = c;
                             if (mask != null) {
@@ -384,84 +650,25 @@ class _EditorPageState extends State<EditorPage> {
                               _editHistory.add(EditType.tap);
                             }
                           });
-                          Navigator.pop(context);
                           _processImage();
-                        },
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: c.color,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Colors.black45,
-                                    blurRadius: 4,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              width: 60,
-                              child: Text(
-                                c.name,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.white70,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                        });
+                      },
+                      icon: const Icon(Icons.search, size: 18),
+                      label: const Text('Search & Browse All Colors', style: TextStyle(fontSize: 14)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFC8102E),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _showColorPicker(onColorSelected: (c) {
-                      setState(() {
-                        _targetFandeckColor = c;
-                        if (mask != null) {
-                          _maskEdits.add(MaskEdit(mask, c.color));
-                          _editHistory.add(EditType.aiMask);
-                        } else {
-                          _tapEdits.add(TapEdit(pt, c.color, _tolerance));
-                          _editHistory.add(EditType.tap);
-                        }
-                      });
-                      _processImage();
-                    });
-                  },
-                  icon: const Icon(Icons.search),
-                  label: const Text('Search & Browse All Colors'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFC8102E),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                ],
               ),
-              const SizedBox(height: 16),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -556,14 +763,23 @@ class _EditorPageState extends State<EditorPage> {
       }
       
       final safeName = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-\s]'), '_');
-      var file = File('${savedDir.path}/$safeName.png');
+      var baseFileName = safeName;
+      var file = File('${savedDir.path}/$baseFileName.png');
       
       // If file exists, append timestamp to avoid overwriting
       if (await file.exists()) {
-         file = File('${savedDir.path}/${safeName}_${DateTime.now().millisecondsSinceEpoch}.png');
+         baseFileName = '${safeName}_${DateTime.now().millisecondsSinceEpoch}';
+         file = File('${savedDir.path}/$baseFileName.png');
       }
 
       await file.writeAsBytes(_editedBytes!);
+
+      // Also save the unedited original image alongside the project for Before/After comparison
+      final origToSave = _referenceOriginalBytes ?? _originalBytes;
+      if (origToSave != null) {
+        final origFile = File('${savedDir.path}/${baseFileName}_orig.png');
+        await origFile.writeAsBytes(origToSave);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Project saved successfully! Check the Saved tab.')),
@@ -587,45 +803,29 @@ class _EditorPageState extends State<EditorPage> {
       return;
     }
 
-    setState(() {
-      _isProcessing = true;
-      _processProgress = 0.20;
-      _processMessage = 'Applying Nippon Paint shade...';
-    });
-
-    // Yield 1 frame so UI renders the loading spinner smoothly before isolate processing
-    await Future.delayed(const Duration(milliseconds: 16));
+    // Process recoloring in background isolate without displaying progress bar
+    final jobId = ++_recolorJobId;
 
     try {
       final params = ProcessImageParams(
         imageBytes: _originalBytes!,
-        tapEdits: _tapEdits,
-        maskEdits: _maskEdits,
+        tapEdits: List.from(_tapEdits),
+        maskEdits: List.from(_maskEdits),
         manualStrokes: [],
         showMaskOverlay: false,
       );
 
-      setState(() {
-        _processProgress = 0.60;
-      });
-
       final resultBytes = await processImage(params);
 
-      if (!mounted) return;
-      setState(() {
-        _processProgress = 1.0;
-        _processMessage = 'Complete!';
-        if (resultBytes != null) {
+      if (!mounted || jobId != _recolorJobId) return;
+      if (resultBytes != null) {
+        setState(() {
           _editedBytes = resultBytes;
-        }
-        _isProcessing = false;
-      });
+        });
+      }
     } catch (e) {
       debugPrint("Error processing image: $e");
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
+      if (mounted && jobId == _recolorJobId) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to apply color: $e')),
         );
@@ -890,16 +1090,26 @@ class _EditorPageState extends State<EditorPage> {
 
       if (!mounted) return;
 
-      setState(() {
-        _isProcessing = false;
-      });
-
       if (mask == null) {
+        setState(() {
+          _isProcessing = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Could not confidently detect a '${parsedCommand.objectName}' in this image.")),
         );
         continue;
       }
+
+      setState(() {
+        _processProgress = 1.0;
+        _processMessage = 'Complete!';
+      });
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessing = false;
+      });
       
       await _showAIColorSelectionSheet(topColors, subject: mask, title: "Select a Shade for ${parsedCommand.objectName}");
     }
@@ -936,67 +1146,103 @@ class _EditorPageState extends State<EditorPage> {
                 runSpacing: 12,
                 children: top10
                     .map(
-                      (c) => GestureDetector(
-                        onTap: () {
-                          Navigator.pop(context);
-                          if (onColorSelected != null) {
-                            onColorSelected(c);
-                            return;
-                          }
-                          setState(() {
-                            _targetFandeckColor = c;
-                          });
-                          
-                          if (subject != null) {
+                      (c) {
+                        final isLastApplied = _targetFandeckColor != null && c.name == _targetFandeckColor!.name;
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.pop(context);
+                            if (onColorSelected != null) {
+                              onColorSelected(c);
+                              return;
+                            }
                             setState(() {
-                              _maskEdits.add(MaskEdit(subject, c.color));
-                              _editHistory.add(EditType.aiMask);
+                              _targetFandeckColor = c;
                             });
-                          } else {
-                            setState(() {
-                              _tapEdits.add(TapEdit(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2), c.color, _tolerance));
-                              _editHistory.add(EditType.tap);
-                            });
-                          }
-                          _processImage();
-                        },
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: c.color,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Colors.black45,
-                                    blurRadius: 4,
+                            
+                            if (subject != null) {
+                              setState(() {
+                                _maskEdits.add(MaskEdit(subject, c.color));
+                                _editHistory.add(EditType.aiMask);
+                              });
+                            } else {
+                              setState(() {
+                                _tapEdits.add(TapEdit(math.Point(_originalImage!.width ~/ 2, _originalImage!.height ~/ 2), c.color, _tolerance));
+                                _editHistory.add(EditType.tap);
+                              });
+                            }
+                            _processImage();
+                          },
+                          child: Column(
+                            children: [
+                              Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Container(
+                                    width: 50,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: c.color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: isLastApplied ? const Color(0xFFC8102E) : Colors.white,
+                                        width: isLastApplied ? 2.5 : 2,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: isLastApplied ? const Color(0xFFC8102E).withValues(alpha: 0.5) : Colors.black45,
+                                          blurRadius: 4,
+                                        ),
+                                      ],
+                                    ),
                                   ),
+                                  if (isLastApplied)
+                                    Container(
+                                      width: 20,
+                                      height: 20,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.black54,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.history, size: 13, color: Colors.white),
+                                    ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              width: 60,
-                              child: Text(
-                                c.name,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.white70,
+                              const SizedBox(height: 4),
+                              SizedBox(
+                                width: 68,
+                                child: Text(
+                                  c.name,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.white70,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
+                              if (isLastApplied) ...[
+                                const SizedBox(height: 2),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFC8102E),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text(
+                                    'Last Applied',
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      },
                     )
                     .toList(),
               ),
@@ -1305,7 +1551,7 @@ class _EditorPageState extends State<EditorPage> {
                                 fit: BoxFit.contain,
                               ),
                             ),
-                          if (_originalBytes != null && _showSlider)
+                          if (_beforeBytes != null && _showSlider)
                             ClipRect(
                               child: Align(
                                 alignment: Alignment.centerLeft,
@@ -1314,7 +1560,7 @@ class _EditorPageState extends State<EditorPage> {
                                   width: constraints.maxWidth,
                                   height: constraints.maxHeight,
                                   child: Image.memory(
-                                    _originalBytes!,
+                                    _beforeBytes!,
                                     width: constraints.maxWidth,
                                     height: constraints.maxHeight,
                                     fit: BoxFit.contain,
@@ -1416,8 +1662,8 @@ class _EditorPageState extends State<EditorPage> {
                               color: Colors.black54,
                               child: Center(
                                 child: Container(
-                                  margin: const EdgeInsets.symmetric(horizontal: 40),
-                                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+                                  width: 270,
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF1A1A1A).withValues(alpha: 0.95),
                                     borderRadius: BorderRadius.circular(20),
@@ -1474,7 +1720,7 @@ class _EditorPageState extends State<EditorPage> {
                                         ClipRRect(
                                           borderRadius: BorderRadius.circular(6),
                                           child: SizedBox(
-                                            width: 160,
+                                            width: 170,
                                             height: 6,
                                             child: LinearProgressIndicator(
                                               value: _processProgress.clamp(0.0, 1.0),
