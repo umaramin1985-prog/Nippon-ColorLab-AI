@@ -11,6 +11,7 @@ class LiteObjectMatcher {
   Map<String, int> _vocab = {};
 
   Future<void> initialize() async {
+    await LiteModelManager().initClip();
     if (_vocab.isNotEmpty) return;
     try {
       final jsonStr = await rootBundle.loadString('assets/models/mobileclip/tokenizer.json');

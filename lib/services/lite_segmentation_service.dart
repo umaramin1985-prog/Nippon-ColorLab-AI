@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'onnxruntime_stub.dart' if (dart.library.io) 'package:onnxruntime/onnxruntime.dart';
@@ -13,10 +12,7 @@ import 'lite_object_matcher.dart';
 class LiteSegmentationService implements AISegmentationService {
   final LiteObjectMatcher _matcher = LiteObjectMatcher();
 
-  LiteSegmentationService() {
-    _matcher.initialize();
-    LiteModelManager().initialize();
-  }
+  LiteSegmentationService();
 
   String? _lastImagePath;
   Float32List? _lastImageEmbeddings;
@@ -25,7 +21,8 @@ class LiteSegmentationService implements AISegmentationService {
 
   Future<void> _ensureEmbeddings(String imagePath) async {
     try {
-      await LiteModelManager().initialize();
+      final samReady = await LiteModelManager().initSam();
+      if (!samReady) return;
       if (_lastImagePath == imagePath && _lastImageEmbeddings != null) return;
 
       final imageBytes = await File(imagePath).readAsBytes();
@@ -77,37 +74,42 @@ class LiteSegmentationService implements AISegmentationService {
 
       final encoderInputTensor = OrtValueTensor.createTensorWithDataList(floatList, [1024, 1024, 3]);
       final encoderRunOptions = OrtRunOptions();
-      final encoderInputs = {encoderSession.inputNames[0]: encoderInputTensor};
-      final encoderOutputs = await encoderSession.runAsync(encoderRunOptions, encoderInputs);
-      if (encoderOutputs == null) return;
-      
-      final rawEmbeddings = encoderOutputs[0]?.value;
-      
-      final flatEmbeddings = await Isolate.run(() {
-        final flat = Float32List(1 * 256 * 64 * 64);
-        if (rawEmbeddings is List) {
-          int idx = 0;
-          void flatten(dynamic list) {
-            if (list is List) {
-              for (var e in list) flatten(e);
-            } else if (list is num) {
-              if (idx < flat.length) flat[idx++] = list.toDouble();
+      List<dynamic>? encoderOutputs;
+      try {
+        final encoderInputs = {encoderSession.inputNames[0]: encoderInputTensor};
+        encoderOutputs = await encoderSession.runAsync(encoderRunOptions, encoderInputs);
+        if (encoderOutputs == null) return;
+        
+        final rawEmbeddings = encoderOutputs[0]?.value;
+        
+        final flatEmbeddings = await Isolate.run(() {
+          final flat = Float32List(1 * 256 * 64 * 64);
+          if (rawEmbeddings is List) {
+            int idx = 0;
+            void flatten(dynamic list) {
+              if (list is List) {
+                for (var e in list) flatten(e);
+              } else if (list is num) {
+                if (idx < flat.length) flat[idx++] = list.toDouble();
+              }
             }
+            flatten(rawEmbeddings);
+          } else if (rawEmbeddings is Float32List) {
+            flat.setAll(0, rawEmbeddings);
           }
-          flatten(rawEmbeddings);
-        } else if (rawEmbeddings is Float32List) {
-          flat.setAll(0, rawEmbeddings);
+          return flat;
+        });
+        
+        _lastImageEmbeddings = flatEmbeddings;
+        _lastImagePath = imagePath;
+      } finally {
+        encoderInputTensor.release();
+        encoderRunOptions.release();
+        if (encoderOutputs != null) {
+          for (var out in encoderOutputs) {
+            out?.release();
+          }
         }
-        return flat;
-      });
-      
-      _lastImageEmbeddings = flatEmbeddings;
-      _lastImagePath = imagePath;
-
-      encoderInputTensor.release();
-      encoderRunOptions.release();
-      for (var out in encoderOutputs) {
-        out?.release();
       }
     } catch (e, stack) {
       debugPrint("LiteSegmentation _ensureEmbeddings Error: $e\n$stack");
@@ -133,15 +135,21 @@ class LiteSegmentationService implements AISegmentationService {
       final isCeiling = normObj.contains('ceiling') || normObj.contains('roof');
       final isWall = normObj.contains('wall');
       final isFloor = normObj.contains('floor') || normObj.contains('ground');
+      final isTable = normObj.contains('table') || normObj.contains('desk') || normObj.contains('counter') || normObj.contains('bench');
+      final isFurniture = normObj.contains('chair') || normObj.contains('sofa') || normObj.contains('couch');
 
       // Craft descriptive prompt for MobileCLIP
       String clipPrompt = object;
       if (isCeiling) {
         clipPrompt = 'the ceiling of a room, overhead ceiling';
       } else if (isWall) {
-        clipPrompt = 'an interior wall of a room, painted vertical wall';
+        clipPrompt = 'an interior wall of a room, vertical painted wall surface';
       } else if (isFloor) {
-        clipPrompt = 'the floor of a room';
+        clipPrompt = 'the floor or flooring of a room';
+      } else if (isTable) {
+        clipPrompt = 'a table, desk surface or tabletop';
+      } else if (isFurniture) {
+        clipPrompt = 'a chair, sofa or seating furniture';
       }
 
       final textEmbedding = await _matcher.getTextEmbedding(clipPrompt);
@@ -156,7 +164,7 @@ class LiteSegmentationService implements AISegmentationService {
 
       // Define grid points tailored to the target object
       final List<List<double>> samplePoints = [];
-      final List<List<double>?> negativePoints = [];
+      final List<List<List<double>>> negativePoints = [];
 
       double scale = 1024.0 / math.max(_lastOrigW, _lastOrigH);
       double newW = _lastOrigW * scale;
@@ -168,16 +176,21 @@ class LiteSegmentationService implements AISegmentationService {
           for (var gx in [0.25, 0.50, 0.75]) {
             samplePoints.add([gx * newW, gy * newH]);
             // Negative prompt down in the wall area
-            negativePoints.add([gx * newW, 0.55 * 1024]);
+            negativePoints.add([
+              [gx * newW, 0.50 * newH],
+            ]);
           }
         }
       } else if (isWall) {
         // Walls are vertical surfaces spanning middle and upper-middle
-        for (var gy in [0.35, 0.50, 0.65]) {
+        for (var gy in [0.22, 0.30, 0.38, 0.46]) {
           for (var gx in [0.20, 0.35, 0.50, 0.65, 0.80]) {
             samplePoints.add([gx * newW, gy * newH]);
-            // Negative prompt up in the ceiling area
-            negativePoints.add([gx * newW, 0.05 * 1024]);
+            // Negative prompts: ceiling and table/floor to isolate wall surface
+            negativePoints.add([
+              [gx * newW, 0.05 * newH],
+              [gx * newW, 0.80 * newH],
+            ]);
           }
         }
       } else if (isFloor) {
@@ -185,7 +198,20 @@ class LiteSegmentationService implements AISegmentationService {
         for (var gy in [0.75, 0.85, 0.92]) {
           for (var gx in [0.30, 0.50, 0.70]) {
             samplePoints.add([gx * newW, gy * newH]);
-            negativePoints.add([gx * newW, 0.05 * 1024]);
+            negativePoints.add([
+              [gx * newW, 0.10 * newH],
+              [gx * newW, 0.45 * newH],
+            ]);
+          }
+        }
+      } else if (isTable) {
+        // Tables are horizontal surfaces in the lower-middle half
+        for (var gy in [0.58, 0.68, 0.78]) {
+          for (var gx in [0.30, 0.50, 0.70]) {
+            samplePoints.add([gx * newW, gy * newH]);
+            negativePoints.add([
+              [gx * newW, 0.15 * newH],
+            ]);
           }
         }
       } else {
@@ -193,19 +219,19 @@ class LiteSegmentationService implements AISegmentationService {
         for (int gy = 1; gy <= 3; gy++) {
           for (int gx = 1; gx <= 3; gx++) {
             samplePoints.add([(gx * newW / 4), (gy * newH / 4)]);
-            negativePoints.add(null);
+            negativePoints.add([]);
           }
         }
       }
 
       for (int i = 0; i < samplePoints.length; i++) {
         final posPt = samplePoints[i];
-        final negPt = negativePoints[i];
+        final negPts = negativePoints[i];
 
         final pointCoords = <double>[posPt[0], posPt[1]];
         final pointLabels = <double>[1.0];
 
-        if (negPt != null) {
+        for (final negPt in negPts) {
           pointCoords.addAll([negPt[0], negPt[1]]);
           pointLabels.add(0.0);
         }
@@ -372,18 +398,24 @@ class LiteSegmentationService implements AISegmentationService {
           double centerY = (minY + maxY) / (2.0 * _lastOrigH);
           double topRatio = minY / _lastOrigH;
           double bottomRatio = maxY / _lastOrigH;
+          double heightRatio = cropH / _lastOrigH;
 
           // Spatial validation
           if (isCeiling) {
             // Ceiling MUST be near the top: bounding box shouldn't start below 25% or have center below 40%
             if (topRatio > 0.25 || centerY > 0.40) continue;
           } else if (isWall) {
-            // Wall must have substantial height and extend downwards
-            if (bottomRatio < 0.35) continue;
-            // Wall shouldn't be purely a thin strip at the very top (ceiling)
+            // Wall is a background vertical surface:
+            // 1. It CANNOT start purely in the lower half (reject tables, desks, rugs, floors)
+            if (topRatio > 0.38 || centerY > 0.52) continue;
+            // 2. Wall must have substantial height and extend downwards
+            if (bottomRatio < 0.30 || heightRatio < 0.15) continue;
+            // 3. Wall shouldn't be purely a thin strip at the very top (ceiling)
             if (topRatio < 0.05 && bottomRatio < 0.25) continue;
           } else if (isFloor) {
             if (bottomRatio < 0.70 || centerY < 0.55) continue;
+          } else if (isTable) {
+            if (centerY < 0.38 || topRatio < 0.20) continue;
           }
 
           img.Image candidateCrop = await Isolate.run(() => img.copyCrop(image, x: minX, y: minY, width: cropW, height: cropH));
@@ -396,7 +428,11 @@ class LiteSegmentationService implements AISegmentationService {
           // Spatial prior boost
           if (isCeiling && topRatio < 0.10) {
             score += 0.08;
-          } else if (isWall && bottomRatio > 0.50 && topRatio > 0.08) {
+          } else if (isWall && topRatio < 0.28 && centerY < 0.50 && bottomRatio > 0.40) {
+            score += 0.10;
+          } else if (isFloor && bottomRatio > 0.85) {
+            score += 0.08;
+          } else if (isTable && centerY > 0.50 && bottomRatio > 0.60) {
             score += 0.08;
           }
 
@@ -431,41 +467,77 @@ class LiteSegmentationService implements AISegmentationService {
       double scale = 1024.0 / math.max(_lastOrigW, _lastOrigH);
       double px = point.x * scale;
       double py = point.y * scale;
+      double newH = _lastOrigH * scale;
 
       final pointCoords = <double>[px, py];
       final pointLabels = <double>[1.0];
 
       // Smart negative prompt:
-      // If user tapped a wall (below 28% of height), place negative prompt in ceiling to prevent upward bleed
-      if (point.y > _lastOrigH * 0.28) {
-        pointCoords.addAll([px, 0.05 * 1024]);
+      if (point.y >= _lastOrigH * 0.20 && point.y <= _lastOrigH * 0.55) {
+        // User tapped a wall (middle/upper vertical region):
+        // Prevent bleed upward into ceiling and downward into table/floor
+        pointCoords.addAll([px, 0.05 * newH]);
         pointLabels.add(0.0);
-      } else if (point.y < _lastOrigH * 0.18) {
-        // If user tapped ceiling (top 18% of height), place negative prompt on wall below to prevent downward bleed
-        pointCoords.addAll([px, 0.55 * 1024]);
+        pointCoords.addAll([px, 0.85 * newH]);
+        pointLabels.add(0.0);
+      } else if (point.y < _lastOrigH * 0.20) {
+        // User tapped ceiling (top 20% of height): prevent downward bleed into wall
+        pointCoords.addAll([px, 0.50 * newH]);
+        pointLabels.add(0.0);
+      } else if (point.y > _lastOrigH * 0.55) {
+        // User tapped furniture, table, or floor: prevent upward bleed into wall
+        pointCoords.addAll([px, 0.25 * newH]);
         pointLabels.add(0.0);
       }
 
       final numPoints = pointLabels.length;
-      final imageEmbeddingsTensor = OrtValueTensor.createTensorWithDataList(_lastImageEmbeddings!, [1, 256, 64, 64]);
-      final pointCoordsTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList(pointCoords), [1, numPoints, 2]);
-      final pointLabelsTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList(pointLabels), [1, numPoints]);
-      final maskInputTensor = OrtValueTensor.createTensorWithDataList(Float32List(1 * 1 * 256 * 256), [1, 1, 256, 256]);
-      final hasMaskInputTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList([0.0]), [1]);
-      final origImSizeTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList([_lastOrigH.toDouble(), _lastOrigW.toDouble()]), [2]);
+      OrtValueTensor? imageEmbeddingsTensor;
+      OrtValueTensor? pointCoordsTensor;
+      OrtValueTensor? pointLabelsTensor;
+      OrtValueTensor? maskInputTensor;
+      OrtValueTensor? hasMaskInputTensor;
+      OrtValueTensor? origImSizeTensor;
+      OrtRunOptions? decoderRunOptions;
+      List<dynamic>? decoded;
 
-      final decoderRunOptions = OrtRunOptions();
-      final decoded = await decoderSession.runAsync(decoderRunOptions, {
-        'image_embeddings': imageEmbeddingsTensor,
-        'point_coords': pointCoordsTensor,
-        'point_labels': pointLabelsTensor,
-        'mask_input': maskInputTensor,
-        'has_mask_input': hasMaskInputTensor,
-        'orig_im_size': origImSizeTensor,
-      });
-      if (decoded == null) return null;
-      
-      final rawMask = decoded[0]?.value;
+      dynamic rawMask;
+      try {
+        imageEmbeddingsTensor = OrtValueTensor.createTensorWithDataList(_lastImageEmbeddings!, [1, 256, 64, 64]);
+        pointCoordsTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList(pointCoords), [1, numPoints, 2]);
+        pointLabelsTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList(pointLabels), [1, numPoints]);
+        maskInputTensor = OrtValueTensor.createTensorWithDataList(Float32List(1 * 1 * 256 * 256), [1, 1, 256, 256]);
+        hasMaskInputTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList([0.0]), [1]);
+        origImSizeTensor = OrtValueTensor.createTensorWithDataList(Float32List.fromList([_lastOrigH.toDouble(), _lastOrigW.toDouble()]), [2]);
+
+        decoderRunOptions = OrtRunOptions();
+        decoded = await decoderSession.runAsync(decoderRunOptions, {
+          'image_embeddings': imageEmbeddingsTensor,
+          'point_coords': pointCoordsTensor,
+          'point_labels': pointLabelsTensor,
+          'mask_input': maskInputTensor,
+          'has_mask_input': hasMaskInputTensor,
+          'orig_im_size': origImSizeTensor,
+        });
+        if (decoded == null) return null;
+        
+        rawMask = decoded[0]?.value;
+      } finally {
+        pointCoordsTensor?.release();
+        pointLabelsTensor?.release();
+        maskInputTensor?.release();
+        hasMaskInputTensor?.release();
+        origImSizeTensor?.release();
+        imageEmbeddingsTensor?.release();
+        decoderRunOptions?.release();
+        if (decoded != null) {
+          for (var out in decoded) {
+            out?.release();
+          }
+        }
+      }
+
+      if (rawMask == null) return null;
+
       final currentOrigW = _lastOrigW;
       final currentOrigH = _lastOrigH;
       final tapX = point.x.clamp(0, currentOrigW - 1);
@@ -518,7 +590,7 @@ class LiteSegmentationService implements AISegmentationService {
         // Connected component extraction starting from tapped seed
         final visited = Uint8List(currentOrigW * currentOrigH);
         final queue = <int>[];
-        final confMask = List<double>.filled(currentOrigW * currentOrigH, 0.0);
+        final confMask = Float32List(currentOrigW * currentOrigH);
 
         int startIdx = seedY * currentOrigW + seedX;
         queue.add(startIdx);
@@ -576,15 +648,6 @@ class LiteSegmentationService implements AISegmentationService {
         if (pixelCount < 20) return null;
         return [confMask, minX, minY, maxX, maxY];
       });
-
-      pointCoordsTensor.release();
-      pointLabelsTensor.release();
-      maskInputTensor.release();
-      hasMaskInputTensor.release();
-      origImSizeTensor.release();
-      imageEmbeddingsTensor.release();
-      decoderRunOptions.release();
-      for (var out in decoded) { out?.release(); }
 
       if (maskResult == null) return null;
 

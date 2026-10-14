@@ -64,20 +64,29 @@ class _VisualizeTab extends StatelessWidget {
   const _VisualizeTab();
 
   Future<void> _pickImage(BuildContext context, ImageSource source) async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(
-      source: source,
-      maxWidth: 1080,
-      maxHeight: 1080,
-      imageQuality: 85,
-    );
-    if (pickedFile != null) {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 88,
+      );
+      if (pickedFile != null) {
+        if (context.mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EditorPage(imagePath: pickedFile.path),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error picking image: $e");
       if (context.mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => EditorPage(imagePath: pickedFile.path),
-          ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open camera/gallery: $e')),
         );
       }
     }

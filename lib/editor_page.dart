@@ -29,13 +29,33 @@ class EditorPage extends StatefulWidget {
 }
 
 // Top-level function to avoid capturing `this` (the Flutter State) in Isolate.
-List<dynamic>? _decodeAndEncodeImage(Uint8List bytes) {
+List<dynamic>? _normalizeAndEncodeImage(Uint8List bytes) {
   try {
-    final decoded = img.decodeImage(bytes);
+    var decoded = img.decodeImage(bytes);
     if (decoded == null) return null;
-    final encoded = img.encodePng(decoded);
+
+    // 1. Bake EXIF orientation (essential for smartphone photos taken in portrait orientation!)
+    decoded = img.bakeOrientation(decoded);
+
+    // 2. Downscale to max dimension of 1280 preserving aspect ratio
+    const int maxDim = 1280;
+    if (decoded.width > maxDim || decoded.height > maxDim) {
+      int newW, newH;
+      if (decoded.width > decoded.height) {
+        newW = maxDim;
+        newH = (maxDim * decoded.height / decoded.width).round();
+      } else {
+        newH = maxDim;
+        newW = (maxDim * decoded.width / decoded.height).round();
+      }
+      decoded = img.copyResize(decoded, width: newW, height: newH, interpolation: img.Interpolation.linear);
+    }
+
+    // 3. Fast, memory-efficient JPEG encoding
+    final encoded = Uint8List.fromList(img.encodeJpg(decoded, quality: 92));
     return [decoded, encoded];
   } catch (e) {
+    debugPrint("Normalization error: $e");
     return null;
   }
 }
@@ -44,6 +64,7 @@ class _EditorPageState extends State<EditorPage> {
   img.Image? _originalImage;
   Uint8List? _originalBytes;
   Uint8List? _editedBytes;
+  String _workingImagePath = '';
 
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -79,8 +100,6 @@ class _EditorPageState extends State<EditorPage> {
 
   double _sliderPosition = 0.25; // Show a quarter of the original image
 
-
-
   bool _isProAvailable = false;
   AIMode _currentAIMode = AIMode.lite;
   late final LiteSegmentationService _liteSegmentationService;
@@ -89,6 +108,7 @@ class _EditorPageState extends State<EditorPage> {
   @override
   void initState() {
     super.initState();
+    _workingImagePath = widget.imagePath;
     _liteSegmentationService = LiteSegmentationService();
     _proSegmentationService = ProSegmentationService();
     _checkProAvailability();
@@ -117,16 +137,27 @@ class _EditorPageState extends State<EditorPage> {
   Future<void> _loadImage() async {
     try {
       final bytes = await XFile(widget.imagePath).readAsBytes();
-      
-      // Use Flutter's compute() to execute the top-level function.
-      // We pass `bytes` directly. Unlike Isolate.run(() => ...), compute does NOT 
-      // require an anonymous closure, guaranteeing `this` is not captured.
-      final result = await compute(_decodeAndEncodeImage, bytes);
+
+      // Use compute to bake EXIF orientation and downscale to max 1280px in worker isolate
+      final result = await compute(_normalizeAndEncodeImage, bytes);
 
       if (result != null && mounted) {
+        final decodedImg = result[0] as img.Image;
+        final jpgBytes = result[1] as Uint8List;
+
+        // Cache the normalized image to disk so segmentation services read this exact clean image
+        try {
+          final tempDir = await getTemporaryDirectory();
+          final normFile = File('${tempDir.path}/norm_${DateTime.now().millisecondsSinceEpoch}.jpg');
+          await normFile.writeAsBytes(jpgBytes);
+          _workingImagePath = normFile.path;
+        } catch (e) {
+          debugPrint("Failed to write normalized temp file: $e");
+        }
+
         setState(() {
-          _originalImage = result[0] as img.Image;
-          _originalBytes = result[1] as Uint8List;
+          _originalImage = decodedImg;
+          _originalBytes = jpgBytes;
           _editedBytes = _originalBytes;
           _isLoading = false;
         });
@@ -175,10 +206,12 @@ class _EditorPageState extends State<EditorPage> {
 
     final x =
         ((localPosition.dx - offsetX) / renderWidth * _originalImage!.width)
-            .toInt();
+            .toInt()
+            .clamp(0, _originalImage!.width - 1);
     final y =
         ((localPosition.dy - offsetY) / renderHeight * _originalImage!.height)
-            .toInt();
+            .toInt()
+            .clamp(0, _originalImage!.height - 1);
 
     return math.Point(x, y);
   }
@@ -188,14 +221,16 @@ class _EditorPageState extends State<EditorPage> {
     final h = _originalImage!.height;
     if (pt.y > h * 0.65) return false;
 
-    final p = _originalImage!.getPixel(pt.x, pt.y);
+    final safeX = pt.x.clamp(0, _originalImage!.width - 1);
+    final safeY = pt.y.clamp(0, _originalImage!.height - 1);
+    final p = _originalImage!.getPixel(safeX, safeY);
     final r = p.r;
     final g = p.g;
     final b = p.b;
 
-    final isBlueSky = b > 115 && b > r + 20 && b >= g - 5 && (r + g + b) > 280;
-    final isOvercastSky = pt.y < h * 0.45 && r > 220 && g > 220 && b > 220 &&
-        (r - g).abs() < 12 && (g - b).abs() < 12 && (r - b).abs() < 12;
+    final isBlueSky = b > 160 && b > r + 50 && b >= g && (r + g + b) > 380;
+    final isOvercastSky = pt.y < h * 0.40 && r > 235 && g > 235 && b > 235 &&
+        (r - g).abs() < 6 && (g - b).abs() < 6 && (r - b).abs() < 6;
 
     return isBlueSky || isOvercastSky;
   }
@@ -223,23 +258,22 @@ class _EditorPageState extends State<EditorPage> {
     // Give UI a moment to show the loader
     await Future.delayed(const Duration(milliseconds: 50));
 
-    bool foundAISubject = false;
-
+    final effectivePath = _workingImagePath.isNotEmpty ? _workingImagePath : widget.imagePath;
     AISegmentationService service = _currentAIMode == AIMode.pro ? _proSegmentationService : _liteSegmentationService;
     AIMask? mask;
     try {
-      mask = await service.segmentByPoint(imagePath: widget.imagePath, point: pt);
+      mask = await service.segmentByPoint(imagePath: effectivePath, point: pt);
     } catch (e) {
       debugPrint("Tap segmentation error: $e");
     }
     
     if (mask == null && _currentAIMode == AIMode.pro) {
       // Fallback to lite for tap since pro might not support tap
-      mask = await _liteSegmentationService.segmentByPoint(imagePath: widget.imagePath, point: pt);
-    }
-
-    if (mask != null && mounted) {
-      foundAISubject = true;
+      try {
+        mask = await _liteSegmentationService.segmentByPoint(imagePath: effectivePath, point: pt);
+      } catch (e) {
+        debugPrint("Fallback segmentation error: $e");
+      }
     }
 
     if (mounted) {
@@ -253,7 +287,9 @@ class _EditorPageState extends State<EditorPage> {
   void _suggestColors(math.Point<int> pt, {AIMask? mask}) {
     if (_originalImage == null || globalFandeckColors.isEmpty) return;
 
-    final pixel = _originalImage!.getPixel(pt.x, pt.y);
+    final safeX = pt.x.clamp(0, _originalImage!.width - 1);
+    final safeY = pt.y.clamp(0, _originalImage!.height - 1);
+    final pixel = _originalImage!.getPixel(safeX, safeY);
     final r = pixel.r;
     final g = pixel.g;
     final b = pixel.b;
@@ -727,8 +763,9 @@ class _EditorPageState extends State<EditorPage> {
           "exact ${selectedColor.name} paint color (hex code $hexCode)"
         );
 
+        final effectivePath = _workingImagePath.isNotEmpty ? _workingImagePath : widget.imagePath;
         final editedBytes = await _proSegmentationService.editImage(
-          imagePath: widget.imagePath,
+          imagePath: effectivePath,
           prompt: newPrompt,
         );
 
@@ -799,10 +836,11 @@ class _EditorPageState extends State<EditorPage> {
       
       await Future.delayed(const Duration(milliseconds: 50));
 
+      final effectivePath = _workingImagePath.isNotEmpty ? _workingImagePath : widget.imagePath;
       AIMask? mask;
       try {
         mask = await _liteSegmentationService.segment(
-          imagePath: widget.imagePath,
+          imagePath: effectivePath,
           object: parsedCommand.objectName,
           position: null,
         );
