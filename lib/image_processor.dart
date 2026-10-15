@@ -270,12 +270,6 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
             if (grad > 38) continue;
 
             final np = image.getPixel(nx, ny);
-            if (ny < height * 0.65) {
-              final isBlueSky = np.b > 160 && np.b > np.r + 50 && np.b >= np.g && (np.r + np.g + np.b) > 380;
-              final isOvercastSky = ny < height * 0.40 && np.r > 235 && np.g > 235 && np.b > 235 &&
-                  (np.r - np.g).abs() < 6 && (np.g - np.b).abs() < 6 && (np.r - np.b).abs() < 6;
-              if (isBlueSky || isOvercastSky) continue;
-            }
 
             final ndr = cp.r - np.r;
             final ndg = cp.g - np.g;

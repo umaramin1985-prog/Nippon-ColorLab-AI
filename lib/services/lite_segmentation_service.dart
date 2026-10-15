@@ -146,11 +146,14 @@ class LiteSegmentationService implements AISegmentationService {
       final isFloor = normObj.contains('floor') || normObj.contains('ground');
       final isTable = normObj.contains('table') || normObj.contains('desk') || normObj.contains('counter') || normObj.contains('bench');
       final isFurniture = normObj.contains('chair') || normObj.contains('sofa') || normObj.contains('couch');
+      final isSky = normObj.contains('sky') || normObj.contains('cloud');
 
       // Craft descriptive prompt for MobileCLIP
       String clipPrompt = object;
       if (isCeiling) {
         clipPrompt = 'the ceiling of a room, overhead ceiling';
+      } else if (isSky) {
+        clipPrompt = 'the sky, open blue or cloudy sky outside';
       } else if (isWall) {
         clipPrompt = 'an interior wall of a room, vertical painted wall surface';
       } else if (isFloor) {
@@ -187,6 +190,16 @@ class LiteSegmentationService implements AISegmentationService {
             samplePoints.add([gx * newW, gy * newH]);
             negativePoints.add([
               [gx * newW, 0.50 * newH],
+            ]);
+          }
+        }
+      } else if (isSky) {
+        // Sky is at the upper region of an exterior/outdoor scene
+        for (var gy in [0.08, 0.18]) {
+          for (var gx in [0.25, 0.50, 0.75]) {
+            samplePoints.add([gx * newW, gy * newH]);
+            negativePoints.add([
+              [gx * newW, 0.75 * newH],
             ]);
           }
         }

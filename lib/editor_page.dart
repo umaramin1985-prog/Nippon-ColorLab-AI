@@ -318,40 +318,9 @@ class _EditorPageState extends State<EditorPage> {
     return math.Point(x, y);
   }
 
-  bool _isSkyPoint(math.Point<int> pt) {
-    if (_originalImage == null) return false;
-    final h = _originalImage!.height;
-    if (pt.y > h * 0.65) return false;
-
-    final safeX = pt.x.clamp(0, _originalImage!.width - 1);
-    final safeY = pt.y.clamp(0, _originalImage!.height - 1);
-    final p = _originalImage!.getPixel(safeX, safeY);
-    final r = p.r;
-    final g = p.g;
-    final b = p.b;
-
-    final isBlueSky = b > 160 && b > r + 50 && b >= g && (r + g + b) > 380;
-    final isOvercastSky = pt.y < h * 0.40 && r > 235 && g > 235 && b > 235 &&
-        (r - g).abs() < 6 && (g - b).abs() < 6 && (r - b).abs() < 6;
-
-    return isBlueSky || isOvercastSky;
-  }
-
   Future<void> _onImageTapped(TapUpDetails details, BoxConstraints constraints) async {
     final pt = _getPointFromLocalPosition(details.localPosition, constraints);
     if (pt == null) return;
-
-    if (_isSkyPoint(pt)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sky cannot be painted. Please tap on walls, ceilings, doors, or furniture.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-      return;
-    }
 
     setState(() {
       _isProcessing = true;
@@ -1277,13 +1246,6 @@ class _EditorPageState extends State<EditorPage> {
 
     // In Pro Mode, we use FLUX to directly edit the image!
     if (_currentAIMode == AIMode.pro) {
-      if (lowerPrompt.contains('sky') || lowerPrompt.contains('cloud')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sky cannot be painted. Please choose an architectural surface like walls, ceilings, doors, or furniture.')),
-        );
-        return;
-      }
-
       if (foundColorStr == null || matchedColors.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please include a color (e.g., red, blue) in your prompt for Pro Mode.')),
@@ -1337,13 +1299,6 @@ class _EditorPageState extends State<EditorPage> {
     if (parsedCommands.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not understand the color or object from your prompt.')),
-      );
-      return;
-    }
-
-    if (parsedCommands.any((cmd) => cmd.objectName == 'sky')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sky cannot be painted. Please choose an architectural surface like walls, ceilings, doors, or furniture.')),
       );
       return;
     }
