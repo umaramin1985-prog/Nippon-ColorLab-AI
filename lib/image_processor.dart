@@ -169,6 +169,101 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
     }
   }
 
+  /// Snaps the alpha mask boundary flush against high-contrast object edges (e.g. picture frames,
+  /// furniture, lamps, baseboards) to eliminate unpainted halos/gaps around objects.
+  void _snapMaskToEdges(
+  img.Image image,
+  Float32List alphaMask,
+  int width,
+  int height, {
+  int maxIterations = 14,
+  double stepThresholdSq = 850.0,
+}) {
+  final inMask = Uint8List(width * height);
+  final currentFrontier = <int>[];
+
+  // 1. Mark existing confident mask pixels as solid (1.0)
+  for (int i = 0; i < width * height; i++) {
+    if (alphaMask[i] >= 0.35) {
+      inMask[i] = 1;
+      alphaMask[i] = 1.0;
+    }
+  }
+
+  // 2. Identify boundary pixels of the mask that border unmasked pixels
+  for (int y = 0; y < height; y++) {
+    final row = y * width;
+    for (int x = 0; x < width; x++) {
+      final idx = row + x;
+      if (inMask[idx] != 1) continue;
+
+      if ((x > 0 && inMask[idx - 1] == 0) ||
+          (x < width - 1 && inMask[idx + 1] == 0) ||
+          (y > 0 && inMask[idx - width] == 0) ||
+          (y < height - 1 && inMask[idx + width] == 0)) {
+        currentFrontier.add(idx);
+      }
+    }
+  }
+
+  if (currentFrontier.isEmpty) return;
+
+  var activeFrontier = currentFrontier;
+
+  // 3. Dilate outward across matching surface pixels until hitting contrasting object edges
+  for (int iter = 0; iter < maxIterations; iter++) {
+    if (activeFrontier.isEmpty) break;
+    final nextFrontier = <int>[];
+
+    for (final srcIdx in activeFrontier) {
+      final sx = srcIdx % width;
+      final sy = srcIdx ~/ width;
+      final sp = image.getPixel(sx, sy);
+      final int sr = sp.r.toInt();
+      final int sg = sp.g.toInt();
+      final int sb = sp.b.toInt();
+
+      final neighbors = <int>[];
+      if (sx > 0) neighbors.add(srcIdx - 1);
+      if (sx < width - 1) neighbors.add(srcIdx + 1);
+      if (sy > 0) neighbors.add(srcIdx - width);
+      if (sy < height - 1) neighbors.add(srcIdx + width);
+
+      for (final nidx in neighbors) {
+        if (inMask[nidx] != 0) continue;
+
+        final nx = nidx % width;
+        final ny = nidx ~/ width;
+        final np = image.getPixel(nx, ny);
+        final int npr = np.r.toInt();
+        final int npg = np.g.toInt();
+        final int npb = np.b.toInt();
+
+        final int dr = npr - sr;
+        final int dg = npg - sg;
+        final int db = npb - sb;
+        final int diffSq = dr * dr + dg * dg + db * db;
+
+        // Only expand onto pixels of the same surface, never crossing into dark frames or distinct furniture
+        if (diffSq <= stepThresholdSq) {
+          inMask[nidx] = 1;
+          alphaMask[nidx] = 1.0;
+          nextFrontier.add(nidx);
+        }
+      }
+    }
+
+    activeFrontier = nextFrontier;
+  }
+
+  // 4. Ensure no unexpanded noise pixels remain in the mask
+  for (int i = 0; i < width * height; i++) {
+    if (inMask[i] == 0) {
+      alphaMask[i] = 0.0;
+    }
+  }
+}
+
   // Process MaskEdits
   for (final maskEdit in maskEdits) {
     final alphaMask = Float32List(width * height);
@@ -195,6 +290,7 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
         }
       }
     }
+    _snapMaskToEdges(image, alphaMask, width, height);
     applyColorToMask(alphaMask, maskEdit.color);
   }
 
@@ -283,6 +379,7 @@ img.Image _floodFillColorize(img.Image image, ProcessImageParams params) {
           }
         }
       }
+      _snapMaskToEdges(image, alphaMask, width, height);
       applyColorToMask(alphaMask, tapEdit.color);
     }
   }

@@ -357,7 +357,7 @@ class LiteSegmentationService implements AISegmentationService {
 
             double val = maskValues[idx];
             double prob = 1.0 / (1.0 + math.exp(-val));
-            double conf = prob >= 0.7 ? 1.0 : (prob - 0.5) / 0.2;
+            double conf = prob >= 0.5 ? 1.0 : (prob - 0.35) / 0.15;
             confMask[idx] = conf.clamp(0.0, 1.0);
             pixelCount++;
 
@@ -368,28 +368,28 @@ class LiteSegmentationService implements AISegmentationService {
 
             if (cx > 0) {
               int nidx = idx - 1;
-              if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+              if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
                 visited[nidx] = 1;
                 queue.add(nidx);
               }
             }
             if (cx < currentOrigW - 1) {
               int nidx = idx + 1;
-              if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+              if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
                 visited[nidx] = 1;
                 queue.add(nidx);
               }
             }
             if (cy > 0) {
               int nidx = idx - currentOrigW;
-              if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+              if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
                 visited[nidx] = 1;
                 queue.add(nidx);
               }
             }
             if (cy < currentOrigH - 1) {
               int nidx = idx + currentOrigW;
-              if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+              if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
                 visited[nidx] = 1;
                 queue.add(nidx);
               }
@@ -637,7 +637,7 @@ class LiteSegmentationService implements AISegmentationService {
 
           double val = maskValues[idx];
           double prob = 1.0 / (1.0 + math.exp(-val));
-          double conf = prob >= 0.7 ? 1.0 : (prob - 0.5) / 0.2;
+          double conf = prob >= 0.5 ? 1.0 : (prob - 0.35) / 0.15;
           confMask[idx] = conf.clamp(0.0, 1.0);
           pixelCount++;
 
@@ -648,28 +648,28 @@ class LiteSegmentationService implements AISegmentationService {
 
           if (cx > 0) {
             int nidx = idx - 1;
-            if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+            if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
               visited[nidx] = 1;
               queue.add(nidx);
             }
           }
           if (cx < currentOrigW - 1) {
             int nidx = idx + 1;
-            if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+            if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
               visited[nidx] = 1;
               queue.add(nidx);
             }
           }
           if (cy > 0) {
             int nidx = idx - currentOrigW;
-            if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+            if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
               visited[nidx] = 1;
               queue.add(nidx);
             }
           }
           if (cy < currentOrigH - 1) {
             int nidx = idx + currentOrigW;
-            if (visited[nidx] == 0 && maskValues[nidx] > 0.0) {
+            if (visited[nidx] == 0 && maskValues[nidx] > -0.2) {
               visited[nidx] = 1;
               queue.add(nidx);
             }
